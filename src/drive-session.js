@@ -15,7 +15,7 @@
   }
 
   function boot(){
-    if(requesting)return;
+    if(requesting||booted)return;
     const settings=read(SETTINGS,{});
     const clientId=String(settings.googleClientId||'').trim();
     if(!clientId || !window.google?.accounts?.oauth2?.initTokenClient)return;
@@ -31,15 +31,15 @@
             booted=true;
             emitToken(response.access_token);
           }
-          // A silent request can legitimately fail with interaction_required.
-          // Never open Google's account picker/login automatically on reload.
+          /* Silent acquisition may fail with interaction_required. In that case
+             stay signed out; never open Google's account picker automatically. */
         }
       });
     }
 
     requesting=true;
     try{
-      // Empty prompt = reuse the existing Google grant without showing a login/consent UI.
+      /* Empty prompt reuses the existing Google grant without UI. */
       client.requestAccessToken({prompt:''});
     }catch(e){
       requesting=false;
@@ -49,7 +49,7 @@
   function start(){
     if(booted)return;
     boot();
-    // GIS is async. Keep trying briefly until it is available.
+    /* GIS is async. Keep trying briefly until it is available. */
     let attempts=0;
     const timer=setInterval(()=>{
       attempts++;
@@ -58,8 +58,9 @@
     },500);
   }
 
-  // main.js is a module and may initialize after this classic script.
-  window.addEventListener('gp-drive-connected',()=>{booted=true});
+  /* Do NOT mark the OAuth refresher as booted merely because another script
+     restored a cached access token. Cached tokens expire; GIS must still be
+     allowed to silently obtain a fresh token on reload. */
   window.addEventListener('load',()=>setTimeout(start,150));
   start();
 })();
