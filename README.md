@@ -59,7 +59,7 @@ Các file `.png`, `.jpg`, `.jpeg`, `.webp`, `.svg`, `.pdf`, `.ai`, `.psd`, `.eps
 
 Ứng dụng front-end dùng Google Identity Services và Drive API với scope chỉ đọc `drive.readonly`.
 
-1. Vào urlGoogle Cloud Consolehttps://console.cloud.google.com/.
+1. Vào Google Cloud Console: https://console.cloud.google.com/
 2. Tạo hoặc chọn một Google Cloud project.
 3. Enable **Google Drive API**.
 4. Configure **OAuth consent screen**. Nếu app đang ở Testing, thêm tài khoản Google sử dụng app vào **Test users**.
@@ -106,4 +106,3 @@ Các trường chính gồm:
 - `driveFileId`
 - `assets[]`
 - `lastDriveSync`
-
