@@ -4,7 +4,7 @@
     const gate=document.querySelector('.gate');
     if(!gate)return;
 
-    /* The product title already contains GP. Remove the decorative kicker/duplicate GP. */
+    /* The product title already contains GP. Remove decorative duplicate branding. */
     gate.querySelectorAll('.gate-kicker,.gate-logo,.gate-brand').forEach(el=>el.remove());
 
     const title=gate.querySelector('h1');
@@ -15,27 +15,39 @@
       });
     }
 
-    /* Never allow the action button and explanatory copy to sit on the same line. */
+    const card=gate.querySelector('.gate-card')||gate.firstElementChild;
+    if(card){
+      /* If explanatory text was emitted as a raw text node beside the button,
+         turn it into a block so it can never wrap around the button. */
+      [...card.childNodes].forEach(node=>{
+        if(node.nodeType!==Node.TEXT_NODE)return;
+        const text=node.textContent.trim();
+        if(!text)return;
+        const copy=document.createElement('div');
+        copy.className='gate-note gate-runtime-copy';
+        copy.textContent=text;
+        node.replaceWith(copy);
+      });
+    }
+
     const button=gate.querySelector('button,.btn');
     if(button){
       button.style.display='flex';
       button.style.width='fit-content';
       button.style.maxWidth='100%';
       button.style.margin='0';
-      let next=button.nextElementSibling;
-      if(next){
-        next.style.display='block';
-        next.style.maxWidth='720px';
-        next.style.marginTop='16px';
-      }
     }
 
-    gate.querySelectorAll('p,span').forEach(el=>{
+    gate.querySelectorAll('p,.gate-note,span').forEach(el=>{
+      el.style.display='block';
       el.style.maxWidth='720px';
       el.style.whiteSpace='normal';
-      el.style.overflowWrap='anywhere';
+      el.style.overflowWrap='break-word';
       el.style.wordBreak='normal';
     });
+
+    const copy=gate.querySelector('.gate-runtime-copy');
+    if(copy)copy.style.marginTop='16px';
   }
 
   const observer=new MutationObserver(fix);
