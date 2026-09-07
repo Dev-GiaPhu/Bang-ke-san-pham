@@ -1,16 +1,65 @@
-/* GP Statistical — silently restore the existing Google Drive OAuth grant on every reload. */
+/* GP Statistical — restore an already-authorized Google Drive grant silently on reload. */
 (function(){
   const SETTINGS='ventek-design-settings-v2';
-  const read=(k,d)=>{try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(d))}catch{return d}};
-  let started=false;
-  function boot(){
-    if(started)return;
-    const clientId=read(SETTINGS,{}).googleClientId;
-    if(!clientId||!window.google?.accounts?.oauth2?.initTokenClient)return;
-    started=true;
-    const client=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:'https://www.googleapis.com/auth/drive.readonly',callback:r=>{if(r.error){started=false;return}window.__gpDriveToken=r.access_token;window.dispatchEvent(new Event('gp-drive-connected'))}});
-    client.requestAccessToken({prompt:''});
+  const SCOPE='https://www.googleapis.com/auth/drive.readonly';
+  const read=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback))}catch{return fallback}};
+  let client=null;
+  let requesting=false;
+  let booted=false;
+
+  function emitToken(token){
+    if(!token)return;
+    window.__gpDriveToken=token;
+    window.__gpDriveAuthenticatedAt=Date.now();
+    window.dispatchEvent(new Event('gp-drive-connected'));
   }
-  const timer=setInterval(()=>{boot();if(started)clearInterval(timer)},300);
-  window.addEventListener('load',()=>setTimeout(boot,500));
+
+  function boot(){
+    if(requesting)return;
+    const settings=read(SETTINGS,{});
+    const clientId=String(settings.googleClientId||'').trim();
+    if(!clientId || !window.google?.accounts?.oauth2?.initTokenClient)return;
+
+    if(!client){
+      client=google.accounts.oauth2.initTokenClient({
+        client_id:clientId,
+        scope:SCOPE,
+        include_granted_scopes:true,
+        callback:response=>{
+          requesting=false;
+          if(response?.access_token){
+            booted=true;
+            emitToken(response.access_token);
+          }
+          // A silent request can legitimately fail with interaction_required.
+          // Never open Google's account picker/login automatically on reload.
+        }
+      });
+    }
+
+    requesting=true;
+    try{
+      // Empty prompt = reuse the existing Google grant without showing a login/consent UI.
+      client.requestAccessToken({prompt:''});
+    }catch(e){
+      requesting=false;
+    }
+  }
+
+  function start(){
+    if(booted)return;
+    boot();
+    // GIS is async. Keep trying briefly until it is available.
+    let attempts=0;
+    const timer=setInterval(()=>{
+      attempts++;
+      if(booted || attempts>40){clearInterval(timer);return;}
+      boot();
+    },500);
+  }
+
+  // main.js is a module and may initialize after this classic script.
+  window.addEventListener('gp-drive-connected',()=>{booted=true});
+  window.addEventListener('load',()=>setTimeout(start,150));
+  start();
 })();
