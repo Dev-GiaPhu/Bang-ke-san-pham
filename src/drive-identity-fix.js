@@ -1,11 +1,10 @@
-/* GP Statistical — preserve exact Drive variant identity; never merge duplicate folder names. */
+/* GP Statistical — preserve the EXACT Drive variant selected by the user. */
 (function(){
   const STORE='ventek-design-tracker-v2';
   const FOLDER='application/vnd.google-apps.folder';
   const ASSET=/\.(png|jpe?g|webp|gif|bmp|tiff?|svg|pdf|ai|psd|eps|indd|zip)$/i;
   const VOL=/((?:\d+(?:[.,]\d+)?)\s?(?:ml|cl|l|lit|liter|litre))/i;
   const SIZ=/\b(\d{2,5}\s*[x×]\s*\d{2,5}|A[0-6])\b/i;
-  const ARCHIVE=/^(old\s*version|old|archive|archived|backup|backups|obsolete|deprecated|previous|prev(?:ious)?\s*version)$/i;
   const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   const volume=s=>{const m=String(s||'').match(VOL);if(!m)return'';return m[1].replace(/\s+/g,'').replace(/lit(?:er|re)?$/i,'L').replace(/l$/i,'L')};
   const size=s=>{const m=String(s||'').match(SIZ);return m?m[1].replace(/\s+/g,'').replace('×','x').toUpperCase():''};
@@ -37,8 +36,6 @@
     return{folders,files};
   }
   function nearestVariant(anc){return[...(anc||[])].reverse().find(a=>volume(a.name)||size(a.name))||null}
-  function isArchivePath(path){return(path||[]).some(x=>ARCHIVE.test(String(x||'').trim()))}
-  function sameVariant(a,b){return volume(a.name)===volume(b.name)&&size(a.name)===size(b.name)&&(volume(a.name)||size(a.name))}
   function assetsForVariant(files,variantId){return files.filter(f=>nearestVariant(f.ancestors)?.id===variantId)}
   function mapAssets(files,variantId){return assetsForVariant(files,variantId).map(f=>({id:f.id,name:f.name,mimeType:f.mimeType||'',modifiedTime:f.modifiedTime||'',version:f.version||'',webViewLink:f.webViewLink||`https://drive.google.com/open?id=${f.id}`,thumbnailLink:f.thumbnailLink||'',folderPath:f.folderPath.join(' / '),role:/final/i.test(f.name)?'final':/mockup/i.test(f.name)?'mockup':/source/i.test(f.name)?'source':'asset'}))}
 
@@ -56,17 +53,15 @@
         let tree;try{tree=await walk(token,rootId)}catch{continue}
         const rootChildren=[...tree.folders.values()].filter(f=>f.ancestors.length===1);
         for(const r of records.filter(x=>(x.driveRootFolderId||idFromUrl(x.driveRootFolderUrl||x.driveFolderUrl))===rootId)){
-          let chosen=tree.folders.get(r.driveVariantFolderId);
-          const currentPath=chosen?.path||String(r.sourceFolderPath||'').split(' / ').filter(Boolean);
-          /* If a record was accidentally moved to an archive/Old version duplicate,
-             prefer the unique direct-child variant with the same identity. */
-          if(chosen&&isArchivePath(currentPath)){
-            const direct=rootChildren.filter(f=>sameVariant(f,chosen));
-            if(direct.length===1)chosen=direct[0];
-          }
-          /* Legacy records without an exact folder ID may only resolve to a direct
-             child of the supplied root. Nested same-name folders are never guessed. */
-          if(!chosen){
+          /* HARD RULE: if the record already has a variant folder ID, that ID is
+             the user's explicit selection. Never replace it by a same-name folder,
+             including a direct 1L versus Old version/1L duplicate. */
+          let chosen=r.driveVariantFolderId?tree.folders.get(r.driveVariantFolderId):null;
+
+          /* Legacy data without an exact variant ID is allowed to resolve only when
+             there is exactly one matching direct child. Never guess among nested
+             folders with the same name/volume/size. */
+          if(!chosen&&!r.driveVariantFolderId){
             const wantV=volume(r.volume),wantS=size(r.size);
             const direct=rootChildren.filter(f=>{
               const fv=volume(f.name),fs=size(f.name);
@@ -75,6 +70,7 @@
             if(direct.length===1)chosen=direct[0];
           }
           if(!chosen)continue;
+
           const newAssets=mapAssets(tree.files,chosen.id);
           const newPath=chosen.path.join(' / ');
           const oldId=r.driveVariantFolderId||'';
