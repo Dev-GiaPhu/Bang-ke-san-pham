@@ -18,10 +18,13 @@
     if(!input||input.dataset.searchFix==='1')return;
     input.dataset.searchFix='1';
     let timer=0;
-    input.addEventListener('compositionstart',()=>{clearTimeout(timer)},true);
+    let composing=false;
+    input.addEventListener('compositionstart',()=>{composing=true;clearTimeout(timer)},true);
+    input.addEventListener('compositionend',()=>{composing=false},true);
     input.addEventListener('input',e=>{
       if(e.__gpSearchSynthetic)return;
       e.stopImmediatePropagation();
+      if(composing||e.isComposing)return;
       clearTimeout(timer);
       timer=setTimeout(()=>{
         const start=input.selectionStart,end=input.selectionEnd;
@@ -30,7 +33,7 @@
         input.dispatchEvent(evt);
         const next=document.querySelector('#searchFilter');
         if(next){next.focus();try{next.setSelectionRange(start,end)}catch{}}
-      },140);
+      },250);
     },true);
     input.addEventListener('keydown',e=>{
       if(e.key!=='Enter')return;
