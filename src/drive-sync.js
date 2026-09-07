@@ -12,7 +12,6 @@ const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '
 const clean = s => String(s || '').replace(/\.[^.]+$/, '').replace(/^\d{1,2}\s*[-_.]\s*/, '').replace(/[_-]+$/,'').replace(/^[_-]+/,'').trim();
 const readJson = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback)); } catch { return fallback; } };
 const writeRecords = records => localStorage.setItem(STORE, JSON.stringify(records));
-const writeSettings = settings => localStorage.setItem(SETTINGS, JSON.stringify(settings));
 const uid = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 function driveId(input) {
   const s = String(input || '').trim();
@@ -20,28 +19,21 @@ function driveId(input) {
   return /^[\w-]{10,}$/.test(s) ? s : '';
 }
 function driveUrl(id) { return `https://drive.google.com/drive/folders/${id}`; }
-function parseVolume(s) {
-  const m = String(s || '').match(VOLUME_IN_TEXT); if (!m) return '';
-  const n = m[1].replace(',', '.'); const unit = m[2].toLowerCase();
-  return `${n}${unit === 'ml' ? 'ml' : unit === 'cl' ? 'cl' : 'L'}`;
-}
+function parseVolume(s) { const m = String(s || '').match(VOLUME_IN_TEXT); if (!m) return ''; const n = m[1].replace(',', '.'); const unit = m[2].toLowerCase(); return `${n}${unit === 'ml' ? 'ml' : unit === 'cl' ? 'cl' : 'L'}`; }
 function parseSize(s) { const m = String(s || '').match(SIZE_IN_TEXT); return m ? m[1].replace(/\s+/g,'').replace('×','x').toUpperCase() : ''; }
 function productFromFile(fileName, folderPath) {
   const raw = clean(fileName);
   let product = raw.replace(VOLUME_IN_TEXT,'').replace(SIZE_IN_TEXT,'').replace(/\b(final|source|mockup|draft|preview|output|print|artwork|design|image|img)\b/ig,'').replace(/[_-]+/g,' ').replace(/\s{2,}/g,' ').trim();
-  if (!product || /^(?:final|source|mockup|draft|preview|output|design|image|img|update)$/i.test(product)) {
-    product = [...folderPath].reverse().find(x => x && !ASSET_FOLDER_RE.test(x) && !VOLUME_RE.test(x) && !SIZE_RE.test(x)) || '';
-  }
+  if (!product || /^(?:final|source|mockup|draft|preview|output|design|image|img|update)$/i.test(product)) product = [...folderPath].reverse().find(x => x && !ASSET_FOLDER_RE.test(x) && !VOLUME_RE.test(x) && !SIZE_RE.test(x)) || '';
   return clean(product);
 }
 function nearestVolume(path) { return [...path].reverse().map(parseVolume).find(Boolean) || ''; }
 function nearestSize(path) { return [...path].reverse().map(parseSize).find(Boolean) || ''; }
-function variantFolderId(file, folderInfo) {
-  const folders = folderInfo || [];
-  const candidate = [...folders].reverse().find(x => x.id && !ASSET_FOLDER_RE.test(x.name));
+function variantFolderId(file, ancestors) {
+  const candidate = [...(ancestors || [])].reverse().find(x => x.id && !ASSET_FOLDER_RE.test(x.name));
   if (!candidate) return '';
-  const hasVariantSignal = VOLUME_RE.test(candidate.name.trim()) || SIZE_RE.test(candidate.name.trim()) || parseVolume(candidate.name) || parseSize(candidate.name) || /\b(?:\d+(?:[.,]\d+)?\s?(?:ml|cl|l|lit|liter|litre))\b/i.test(candidate.name);
-  return hasVariantSignal ? candidate.id : '';
+  const signal = parseVolume(candidate.name) || parseSize(candidate.name) || VOLUME_RE.test(candidate.name.trim()) || SIZE_RE.test(candidate.name.trim());
+  return signal ? candidate.id : '';
 }
 function roleFromPath(file, folderPath) {
   const hit = [...folderPath].reverse().find(x => ASSET_FOLDER_RE.test(x));
@@ -58,14 +50,9 @@ async function tokenFromGIS(clientId) {
     client.requestAccessToken({ prompt: '' });
   });
 }
-async function api(token, url) {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!r.ok) throw new Error(`Drive API ${r.status}`);
-  return r.json();
-}
+async function api(token, url) { const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } }); if (!r.ok) throw new Error(`Drive API ${r.status}`); return r.json(); }
 async function walk(token, rootId) {
   const files = [];
-  const folders = new Map();
   async function visit(id, path, ancestors) {
     let page = '';
     do {
@@ -77,29 +64,27 @@ async function walk(token, rootId) {
       for (const f of data.files || []) {
         if (f.mimeType === FOLDER_MIME) {
           const info = { id: f.id, name: f.name };
-          folders.set(f.id, { ...info, path: [...path, f.name], ancestors: [...ancestors, info] });
           await visit(f.id, [...path, f.name], [...ancestors, info]);
-        } else {
-          files.push({ ...f, folderPath: path, ancestors });
-        }
+        } else files.push({ ...f, folderPath: path, ancestors });
       }
       page = data.nextPageToken || '';
     } while (page);
   }
   await visit(rootId, [], []);
-  return { files, folders };
+  return { files };
 }
 function buildVariants(root, walked) {
   const groups = new Map();
   for (const file of walked.files) {
-    if (!ASSET_EXT.test(file.name) && !file.mimeType) continue;
+    if (!ASSET_EXT.test(file.name)) continue;
     const volume = parseVolume(file.name) || nearestVolume(file.folderPath);
     const size = parseSize(file.name) || nearestSize(file.folderPath);
     const productName = productFromFile(file.name, file.folderPath);
     if (!productName && !volume && !size) continue;
-    const vId = variantFolderId(file, file.ancestors) || `fallback:${norm(productName)}|${norm(volume)}|${norm(size)}`;
-    const key = `${root.id}|${vId}`;
-    if (!groups.has(key)) groups.set(key, { productName, volume, size, variantFolderId: vId.startsWith('fallback:') ? '' : vId, assets: [], driveRootFolderId: root.id, driveRootFolderUrl: root.webViewLink || driveUrl(root.id), sourceFolderPath: file.folderPath.join(' / ') });
+    const vId = variantFolderId(file, file.ancestors);
+    const fallback = `fallback:${norm(productName)}|${norm(volume)}|${norm(size)}`;
+    const key = `${root.id}|${vId || fallback}`;
+    if (!groups.has(key)) groups.set(key, { productName, volume, size, variantFolderId: vId, assets: [], driveRootFolderId: root.id, driveRootFolderUrl: root.webViewLink || driveUrl(root.id), sourceFolderPath: file.folderPath.join(' / ') });
     const g = groups.get(key);
     if (!g.productName && productName) g.productName = productName;
     if (!g.volume && volume) g.volume = volume;
@@ -107,73 +92,43 @@ function buildVariants(root, walked) {
     g.assets.push({ id: file.id, name: file.name, mimeType: file.mimeType || '', modifiedTime: file.modifiedTime || '', version: file.version || '', size: file.size || '', webViewLink: file.webViewLink || `https://drive.google.com/open?id=${file.id}`, thumbnailLink: file.thumbnailLink || '', folderPath: file.folderPath.join(' / '), role: roleFromPath(file, file.folderPath) });
   }
   for (const g of groups.values()) {
-    const imageAssets = g.assets.filter(a => IMAGE_EXT.test(a.name) || /^image\//i.test(a.mimeType));
-    imageAssets.sort((a,b) => (a.role === 'final' ? -1 : 0) - (b.role === 'final' ? -1 : 0) || String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
-    const preview = imageAssets[0] || g.assets[0];
+    const images = g.assets.filter(a => IMAGE_EXT.test(a.name) || /^image\//i.test(a.mimeType));
+    images.sort((a,b) => (a.role === 'final' ? -1 : 0) - (b.role === 'final' ? -1 : 0) || String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
+    const preview = images[0] || g.assets[0];
     g.previewFileId = preview?.id || '';
     g.previewFileName = preview?.name || '';
-    g.lastDriveModified = g.assets.reduce((m,a) => a.modifiedTime > m ? a.modifiedTime : m, '');
   }
-  return [...groups.values()].filter(g => g.productName || g.volume || g.size);
+  return [...groups.values()];
 }
-function identity(r) {
-  if (r.driveVariantFolderId && r.driveRootFolderId) return `folder:${r.driveRootFolderId}:${r.driveVariantFolderId}`;
-  if (r.driveFolderId && r.driveRootFolderId) return `folder:${r.driveRootFolderId}:${r.driveFolderId}`;
-  return `fallback:${norm(r.productName)}|${norm(r.volume)}|${norm(r.size)}`;
-}
-function mergeRecord(records, variant, nowMonth) {
-  const candidates = records.filter(r => {
-    const sameRoot = r.driveRootFolderId && r.driveRootFolderId === variant.driveRootFolderId;
-    const sameVariant = variant.variantFolderId && r.driveVariantFolderId === variant.variantFolderId;
-    const sameFallback = !variant.variantFolderId && norm(r.productName) === norm(variant.productName) && norm(r.volume) === norm(variant.volume) && norm(r.size) === norm(variant.size);
-    return sameRoot && (sameVariant || sameFallback);
+function mergeRecord(records, v, month) {
+  const r = records.find(x => {
+    if (v.variantFolderId && x.driveVariantFolderId) return x.driveVariantFolderId === v.variantFolderId;
+    return norm(x.productName) === norm(v.productName) && norm(x.volume) === norm(v.volume) && norm(x.size) === norm(v.size);
   });
-  let r = candidates[0];
-  if (!r) {
-    r = { id: uid(), month: nowMonth, date: new Date().toISOString().slice(0,10), quantity: 1, designer: '', editTypes: [], createdAt: new Date().toISOString(), drivePresent: true };
-    records.push(r);
-  }
-  const oldAssets = new Map((r.assets || []).map(a => [a.id, a]));
-  r.productName = variant.productName || r.productName || '';
-  r.volume = variant.volume || r.volume || '';
-  r.size = variant.size || r.size || '';
-  r.driveRootFolderId = variant.driveRootFolderId;
-  r.driveRootFolderUrl = variant.driveRootFolderUrl;
-  r.driveVariantFolderId = variant.variantFolderId || r.driveVariantFolderId || '';
-  r.driveFolderUrl = variant.driveRootFolderUrl;
-  r.driveFileId = variant.previewFileId || r.driveFileId || '';
-  r.sourceFileName = variant.previewFileName || r.sourceFileName || '';
-  r.sourceFolderPath = variant.sourceFolderPath || r.sourceFolderPath || '';
-  r.assets = variant.assets.map(a => ({ ...(oldAssets.get(a.id) || {}), ...a }));
-  r.drivePresent = true;
-  r.lastDriveSync = new Date().toISOString();
-  return r;
-}
-async function syncRoot(rootId, token) {
-  const root = await api(token, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(rootId)}?fields=id,name,mimeType,webViewLink,modifiedTime`);
-  if (root.mimeType !== FOLDER_MIME) throw new Error(`Drive link không phải thư mục: ${root.name || rootId}`);
-  const walked = await walk(token, rootId);
-  return { root, variants: buildVariants(root, walked) };
+  const record = r || { id: uid(), month, date: new Date().toISOString().slice(0,10), quantity: 1, designer: '', editTypes: [], createdAt: new Date().toISOString() };
+  const old = new Map((record.assets || []).map(a => [a.id, a]));
+  Object.assign(record, { productName: v.productName || record.productName || '', volume: v.volume || record.volume || '', size: v.size || record.size || '', driveRootFolderId: v.driveRootFolderId, driveRootFolderUrl: v.driveRootFolderUrl, driveVariantFolderId: v.variantFolderId || record.driveVariantFolderId || '', driveFolderUrl: v.driveRootFolderUrl, driveFileId: v.previewFileId || record.driveFileId || '', sourceFileName: v.previewFileName || record.sourceFileName || '', sourceFolderPath: v.sourceFolderPath || record.sourceFolderPath || '', assets: v.assets.map(a => ({ ...(old.get(a.id) || {}), ...a })), drivePresent: true, lastDriveSync: new Date().toISOString() });
+  if (!r) records.push(record);
+  return record;
 }
 async function autoSync() {
-  const settings = readJson(SETTINGS, {});
-  const records = readJson(STORE, []);
+  const settings = readJson(SETTINGS, {}); const records = readJson(STORE, []);
   const roots = [...new Set(records.map(r => r.driveRootFolderId || driveId(r.driveRootFolderUrl || r.driveFolderUrl)).filter(Boolean))];
   if (!roots.length || !settings.googleClientId) return;
-  let token;
-  try { token = await tokenFromGIS(settings.googleClientId); } catch { return; }
-  let changed = false;
-  const month = new Date().toISOString().slice(0,7);
+  let token; try { token = await tokenFromGIS(settings.googleClientId); } catch { return; }
+  const month = new Date().toISOString().slice(0,7); let changed = false;
   for (const rootId of roots) {
     try {
-      const result = await syncRoot(rootId, token);
-      const seen = new Set();
-      for (const v of result.variants) { const before = JSON.stringify(v); const r = mergeRecord(records, v, month); seen.add(identity(r)); if (JSON.stringify(v) !== before || r.lastDriveSync) changed = true; }
+      const root = await api(token, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(rootId)}?fields=id,name,mimeType,webViewLink,modifiedTime`);
+      if (root.mimeType !== FOLDER_MIME) continue;
+      const result = buildVariants(root, await walk(token, rootId));
       const rootRecords = records.filter(r => r.driveRootFolderId === rootId);
-      for (const r of rootRecords) if (!seen.has(identity(r))) { r.drivePresent = false; r.lastDriveSync = new Date().toISOString(); changed = true; }
+      const seen = new Set();
+      for (const v of result) { const r = mergeRecord(records, v, month); seen.add(r.id); changed = true; }
+      for (const r of rootRecords) if (!seen.has(r.id)) { r.drivePresent = false; r.lastDriveSync = new Date().toISOString(); changed = true; }
     } catch (e) { console.warn('[Drive Sync]', rootId, e); }
   }
-  if (changed) { writeRecords(records); window.dispatchEvent(new CustomEvent('ventek-drive-synced')); setTimeout(() => location.reload(), 150); }
+  if (changed) { writeRecords(records); setTimeout(() => location.reload(), 150); }
 }
 function waitForGISAndSync(attempt = 0) {
   if (attempt > 40) return;
