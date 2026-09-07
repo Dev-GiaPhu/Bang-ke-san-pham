@@ -1,0 +1,41 @@
+const KEY='ventek-records-v1';
+const designers=['Gia Phú','Designer khác'];
+const editTypes=['Design mới','Sửa thông tin','Update thông tin','Sửa kích thước'];
+let records=JSON.parse(localStorage.getItem(KEY)||'[]');
+let filters={month:'2026-09',designer:'',edit:'',q:'',volume:''};
+const app=document.querySelector('#app');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+function save(){localStorage.setItem(KEY,JSON.stringify(records))}
+function parseFile(name,parent=''){
+  const base=name.replace(/\.[^.]+$/,'');
+  const volume=(base.match(/(?<!\w)(\d+(?:[.,]\d+)?)\s?(ml|l|lit|liter)(?!\w)/i)||[])[0]||'';
+  const size=(base.match(/\b\d{2,5}\s*[x×]\s*\d{2,5}\b/i)||base.match(/\bA[0-6]\b/i)||[])[0]||'';
+  const index=(base.match(/(?:[_-])\d{1,3}$/)||[])[0]||'';
+  let product=base.replace(/(?:[_-])\d{1,3}$/,'').replace(/\s*\d+(?:[.,]\d+)?\s?(?:ml|l|lit|liter)\b/ig,'').replace(/\b\d{2,5}\s*[x×]\s*\d{2,5}\b/ig,'').replace(/\bA[0-6]\b/ig,'').replace(/[_-]+$/,'').trim();
+  if(parent && (!product || /^\d/.test(product))) product=parent;
+  return {productName:product||parent||base,volume,size,sourceFileName:name,sourceFolderPath:parent};
+}
+function extractFolderId(url){const m=url.match(/(?:folders\/|id=)([a-zA-Z0-9_-]+)/);return m?m[1]:''}
+function scanDriveLink(url){
+  const id=extractFolderId(url); if(!id) throw new Error('Không nhận diện được Folder ID từ link Drive.');
+  // Front-end demo parser: accepts a pasted filename list for testing. Real private Drive scanning is wired through /api/drive/scan.
+  const names=url.includes('#files=')?decodeURIComponent(url.split('#files=')[1]).split('|'):[];
+  return names.filter(Boolean).map(n=>parseFile(n,'COOLANT G10'));
+}
+function render(){
+ const filtered=records.filter(r=>(!filters.month||r.month===filters.month)&&(!filters.designer||r.designer===filters.designer)&&(!filters.edit||r.editTypes.includes(filters.edit))&&(!filters.volume||r.volume.toLowerCase()===filters.volume.toLowerCase())&&(!filters.q||r.productName.toLowerCase().includes(filters.q.toLowerCase())));
+ const qty=filtered.reduce((a,r)=>a+(Number(r.quantity)||0),0), fresh=filtered.filter(r=>r.editTypes.includes('Design mới')).length;
+ app.innerHTML=`<div class="shell"><aside class="sidebar"><div class="brand">VENTEK <span>DESIGN</span></div><div class="nav"><button class="active">▦ Tổng quan</button><button id="addNav">＋ Thêm sản phẩm</button><button>▤ Danh sách</button><button>⚙ Cài đặt</button></div></aside><main class="main"><div class="top"><div><h1 class="title">Bảng kê sản phẩm</h1><div class="muted">Theo dõi công việc thiết kế theo tháng</div></div><div class="actions"><button class="btn primary" id="addBtn">＋ Thêm sản phẩm</button></div></div><section class="grid"><div class="card"><div class="muted">Tổng sản phẩm</div><div class="metric">${filtered.length}</div></div><div class="card"><div class="muted">Tổng số lượng</div><div class="metric">${qty}</div></div><div class="card"><div class="muted">Design mới</div><div class="metric">${fresh}</div></div><div class="card"><div class="muted">Chỉnh sửa / Update</div><div class="metric">${filtered.length-fresh}</div></div></section><div class="filters"><input class="input" type="month" id="month" value="${filters.month}"><select class="select" id="designer"><option value="">Tất cả người thực hiện</option>${designers.map(x=>`<option ${filters.designer===x?'selected':''}>${x}</option>`).join('')}</select><select class="select" id="edit"><option value="">Tất cả loại công việc</option>${editTypes.map(x=>`<option ${filters.edit===x?'selected':''}>${x}</option>`).join('')}</select><input class="input" id="volume" placeholder="Thể tích: 4L" value="${esc(filters.volume)}"><input class="input wide" id="q" placeholder="Tìm tên sản phẩm..." value="${esc(filters.q)}"></div><div class="card table-card"><table class="table"><thead><tr><th>Hình</th><th>Sản phẩm</th><th>Kích thước</th><th>Thể tích</th><th>SL</th><th>Người thực hiện</th><th>Loại chỉnh sửa</th><th>Drive</th></tr></thead><tbody>${filtered.length?filtered.map(r=>`<tr><td>${r.driveImageUrl?`<img class="thumb" src="${esc(r.driveImageUrl)}">`:'—'}</td><td><b>${esc(r.productName)}</b><div class="muted">${esc(r.sourceFileName||'')}</div></td><td>${esc(r.size||'—')}</td><td>${esc(r.volume||'—')}</td><td>${r.quantity}</td><td>${esc(r.designer)}</td><td>${r.editTypes.map(x=>`<span class="pill">${esc(x)}</span>`).join('')}</td><td>${r.driveFolderUrl?`<a href="${esc(r.driveFolderUrl)}" target="_blank">Mở Drive ↗</a>`:'—'}</td></tr>`).join(''):`<tr><td colspan="8" class="empty">Chưa có dữ liệu. Bấm <b>Thêm sản phẩm</b> để bắt đầu.</td></tr>`}</tbody></table></div></main></div>`;
+ ['month','designer','edit','volume','q'].forEach(id=>document.getElementById(id).addEventListener('input',e=>{filters[id]=e.target.value;render()}));
+ document.getElementById('addBtn').onclick=modal;document.getElementById('addNav').onclick=modal;
+}
+function modal(){
+ const wrap=document.createElement('div');wrap.className='modal-backdrop';wrap.innerHTML=`<div class="modal"><div class="modal-head"><div><h2>Thêm sản phẩm từ Google Drive</h2><div class="muted">Dán link thư mục sản phẩm, sau đó quét để tạo bản xem trước.</div></div><button class="btn" id="close">Đóng</button></div><div class="form-grid"><div class="field"><label>THÁNG</label><input class="input" id="m" type="month" value="${filters.month}"></div><div class="field"><label>NGƯỜI THỰC HIỆN</label><select class="select" id="d">${designers.map(x=>`<option>${x}</option>`).join('')}</select></div><div class="field"><label>LOẠI CHỈNH SỬA</label><select class="select" id="e" multiple size="4">${editTypes.map(x=>`<option>${x}</option>`).join('')}</select></div></div><div class="field"><label>LINK GOOGLE DRIVE</label><div style="display:flex;gap:8px"><input class="input wide" id="drive" placeholder="https://drive.google.com/drive/folders/..."/><button class="btn primary" id="scan">Đọc Drive</button></div><div class="muted" style="margin-top:6px">Tên file có thể theo dạng COOLANT G10_4L_500x700__01.png. Thông tin không chắc chắn sẽ để trống để bạn sửa.</div></div><div id="preview" style="margin-top:18px"></div><div class="actions" style="justify-content:flex-end;margin-top:18px"><button class="btn" id="cancel">Hủy</button><button class="btn primary" id="confirm" disabled>Xác nhận & thêm</button></div></div>`;
+ document.body.appendChild(wrap);wrap.querySelector('#close').onclick=wrap.querySelector('#cancel').onclick=()=>wrap.remove();
+ let rows=[];
+ wrap.querySelector('#scan').onclick=()=>{try{rows=scanDriveLink(wrap.querySelector('#drive').value);if(!rows.length) throw new Error('Chưa có danh sách file để preview. Trong bản thật, nút này sẽ gọi Drive API để đọc trực tiếp folder.');showPreview()}catch(err){alert(err.message)}};
+ function showPreview(){wrap.querySelector('#preview').innerHTML=`<div class="preview"><table><thead><tr><th>Sản phẩm</th><th>Thể tích</th><th>Kích thước</th><th>Số lượng</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td><input data-i="${i}" data-k="productName" value="${esc(r.productName)}"></td><td><input data-i="${i}" data-k="volume" value="${esc(r.volume)}"></td><td><input data-i="${i}" data-k="size" value="${esc(r.size)}"></td><td><input data-i="${i}" data-k="quantity" type="number" min="1" value="1"></td></tr>`).join('')}</tbody></table></div>`;wrap.querySelectorAll('[data-i]').forEach(el=>el.oninput=()=>rows[el.dataset.i][el.dataset.k]=el.value);wrap.querySelector('#confirm').disabled=!rows.length;}
+ wrap.querySelector('#confirm').onclick=()=>{const month=wrap.querySelector('#m').value,designer=wrap.querySelector('#d').value,editTypesSelected=[...wrap.querySelector('#e').selectedOptions].map(o=>o.value);if(!editTypesSelected.length)return alert('Chọn ít nhất một loại chỉnh sửa.');const drive=wrap.querySelector('#drive').value;records.push(...rows.map(r=>({...r,id:crypto.randomUUID(),month,designer,editTypes:editTypesSelected,driveFolderUrl:drive,createdAt:new Date().toISOString(),date:new Date().toISOString().slice(0,10)})));save();wrap.remove();render();toast(`Đã thêm ${rows.length} sản phẩm`)};
+}
+function toast(t){const x=document.createElement('div');x.className='toast';x.textContent=t;document.body.appendChild(x);setTimeout(()=>x.remove(),2200)}
+render();
