@@ -1,16 +1,9 @@
-const get=(id)=>document.getElementById(id);
+const STORE='ventek-design-tracker-v2',SETTINGS='ventek-design-settings-v2';
+const read=(k,d)=>{try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(d))}catch{return d}};
+const write=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
+const esc2=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const defaults={designers:['Gia Phú'],customers:[],editTypes:['Design mới','Sửa thông tin','Update thông tin','Sửa kích thước'],googleClientId:'',pageSize:50};
 function enhanceSettings(){
-  document.querySelectorAll('settings-card').forEach(card=>{
-    if(card.dataset.ready)return;
-    card.dataset.ready='1';
-    const title=card.getAttribute('title')||'Danh mục',input=card.getAttribute('input')||'',button=card.getAttribute('button')||'',placeholder=card.getAttribute('placeholder')||'';
-    const children=card.innerHTML;
-    card.innerHTML=`<div class="card-inner"><div class="section-head"><h2>${title}</h2></div><div class="filters"><input class="input" id="${input}" placeholder="${placeholder}"><button class="btn primary" id="${button}">Thêm</button></div><div class="pill-list">${children}</div></div>`;
-  });
-  const customer=get('customerFilter');
-  if(customer){const f=stateSafeCustomer(); if(f)customer.value=f;}
-}
-function stateSafeCustomer(){try{return (window.__gpCustomerFilter||'')}catch{return''}}
-const observer=new MutationObserver(()=>enhanceSettings());
-observer.observe(document.body,{childList:true,subtree:true});
-enhanceSettings();
+ document.querySelectorAll('settings-card').forEach(card=>{if(card.dataset.ready)return;card.dataset.ready='1';const title=card.getAttribute('title')||'Danh mục',input=card.getAttribute('input')||'',button=card.getAttribute('button')||'',placeholder=card.getAttribute('placeholder')||'',children=card.innerHTML;card.innerHTML=`<div class="card-inner"><div class="section-head"><h2>${esc2(title)}</h2></div><div class="filters"><input class="input" id="${esc2(input)}" placeholder="${esc2(placeholder)}"><button class="btn primary" id="${esc2(button)}">Thêm</button></div><div class="pill-list">${children}</div></div>`});bindSettings();}
+function bindSettings(){const s={...defaults,...read(SETTINGS,{})};s.customers=s.customers||[];[['addCustomer','newCustomer','customers'],['addDesigner','newDesigner','designers'],['addEdit','newEdit','editTypes']].forEach(([bid,iid,key])=>{const b=document.getElementById(bid),i=document.getElementById(iid);if(!b||b.dataset.bound)return;b.dataset.bound='1';b.onclick=()=>{const v=i.value.trim();if(!v)return;if(!s[key].includes(v)){s[key].push(v);write(SETTINGS,s);location.reload()}}});document.querySelectorAll('[data-rm-customer],[data-rm-designer],[data-rm-edit]').forEach(b=>{if(b.dataset.bound)return;b.dataset.bound='1';b.onclick=()=>{const key=b.dataset.rmCustomer!==undefined?'customers':b.dataset.rmDesigner!==undefined?'designers':'editTypes';const n=Number(b.dataset.rmCustomer??b.dataset.rmDesigner??b.dataset.rmEdit);s[key].splice(n,1);write(SETTINGS,s);location.reload()}});const save=document.getElementById('saveClient');if(save&&!save.dataset.bound){save.dataset.bound='1';save.onclick=()=>{s.googleClientId=document.getElementById('clientId')?.value.trim()||'';write(SETTINGS,s);alert('Đã lưu Google Client ID. Trang sẽ tải lại.');location.reload()}}const backup=document.getElementById('backup');if(backup&&!backup.dataset.bound){backup.dataset.bound='1';backup.onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({version:3,settings:s,records:read(STORE,[])},null,2)],{type:'application/json'}));a.download=`gp-statistical-${Date.now()}.json`;a.click()}}const clear=document.getElementById('clearAll');if(clear&&!clear.dataset.bound){clear.dataset.bound='1';clear.onclick=()=>{if(confirm('Xóa toàn bộ dữ liệu sản phẩm?')){write(STORE,[]);location.reload()}}}const restore=document.getElementById('restore');if(restore&&!restore.dataset.bound){restore.dataset.bound='1';restore.onchange=e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const x=JSON.parse(r.result);if(!Array.isArray(x.records))throw Error();write(STORE,x.records);write(SETTINGS,{...defaults,...(x.settings||{})});location.reload()}catch{alert('File JSON không hợp lệ')}};r.readAsText(f)}}}
+const observer=new MutationObserver(()=>bindSettings());observer.observe(document.body,{childList:true,subtree:true});enhanceSettings();
