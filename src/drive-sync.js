@@ -1,139 +1,30 @@
-const STORE = 'ventek-design-tracker-v2';
-const SETTINGS = 'ventek-design-settings-v2';
-const FOLDER_MIME = 'application/vnd.google-apps.folder';
-const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?|svg)$/i;
-const ASSET_EXT = /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|pdf|ai|psd|eps|indd|zip)$/i;
-const ASSET_FOLDER_RE = /^(?:\d{1,2}\s*[-_.]\s*)?(final|source|mockup|draft|preview|output|print|artwork|file)$/i;
-const VOLUME_RE = /^(?:\d{1,4}(?:[.,]\d+)?)\s?(?:ml|cl|l|lit|liter|litre)$/i;
-const SIZE_RE = /^(?:A[0-6]|\d{2,5}\s*[x×]\s*\d{2,5})$/i;
-const VOLUME_IN_TEXT = /(?<!\w)(\d+(?:[.,]\d+)?)\s?(ml|cl|l|lit|liter|litre)(?!\w)/i;
-const SIZE_IN_TEXT = /\b(\d{2,5}\s*[x×]\s*\d{2,5}|A[0-6])\b/i;
-const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-const clean = s => String(s || '').replace(/\.[^.]+$/, '').replace(/^\d{1,2}\s*[-_.]\s*/, '').replace(/[_-]+$/,'').replace(/^[_-]+/,'').trim();
-const readJson = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k) || JSON.stringify(fallback)); } catch { return fallback; } };
-const writeRecords = records => localStorage.setItem(STORE, JSON.stringify(records));
-const uid = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-function driveId(input) {
-  const s = String(input || '').trim();
-  for (const re of [/\/folders\/([\w-]+)/, /[?&]id=([\w-]+)/, /\/d\/([\w-]+)/]) { const m = s.match(re); if (m) return m[1]; }
-  return /^[\w-]{10,}$/.test(s) ? s : '';
-}
-function driveUrl(id) { return `https://drive.google.com/drive/folders/${id}`; }
-function parseVolume(s) { const m = String(s || '').match(VOLUME_IN_TEXT); if (!m) return ''; const n = m[1].replace(',', '.'); const unit = m[2].toLowerCase(); return `${n}${unit === 'ml' ? 'ml' : unit === 'cl' ? 'cl' : 'L'}`; }
-function parseSize(s) { const m = String(s || '').match(SIZE_IN_TEXT); return m ? m[1].replace(/\s+/g,'').replace('×','x').toUpperCase() : ''; }
-function productFromFile(fileName, folderPath) {
-  const raw = clean(fileName);
-  let product = raw.replace(VOLUME_IN_TEXT,'').replace(SIZE_IN_TEXT,'').replace(/\b(final|source|mockup|draft|preview|output|print|artwork|design|image|img)\b/ig,'').replace(/[_-]+/g,' ').replace(/\s{2,}/g,' ').trim();
-  if (!product || /^(?:final|source|mockup|draft|preview|output|design|image|img|update)$/i.test(product)) product = [...folderPath].reverse().find(x => x && !ASSET_FOLDER_RE.test(x) && !VOLUME_RE.test(x) && !SIZE_RE.test(x)) || '';
-  return clean(product);
-}
-function nearestVolume(path) { return [...path].reverse().map(parseVolume).find(Boolean) || ''; }
-function nearestSize(path) { return [...path].reverse().map(parseSize).find(Boolean) || ''; }
-function variantFolderId(file, ancestors) {
-  const candidate = [...(ancestors || [])].reverse().find(x => x.id && !ASSET_FOLDER_RE.test(x.name));
-  if (!candidate) return '';
-  const signal = parseVolume(candidate.name) || parseSize(candidate.name) || VOLUME_RE.test(candidate.name.trim()) || SIZE_RE.test(candidate.name.trim());
-  return signal ? candidate.id : '';
-}
-function roleFromPath(file, folderPath) {
-  const hit = [...folderPath].reverse().find(x => ASSET_FOLDER_RE.test(x));
-  if (hit) return clean(hit).replace(/^\d{1,2}\s*[-_.]\s*/,'').toLowerCase();
-  if (/final/i.test(file.name)) return 'final';
-  if (/mockup/i.test(file.name)) return 'mockup';
-  if (/source/i.test(file.name)) return 'source';
-  return 'asset';
-}
-async function tokenFromGIS(clientId) {
-  if (!clientId || !window.google?.accounts?.oauth2) throw new Error('GIS unavailable');
-  return new Promise((resolve, reject) => {
-    const client = google.accounts.oauth2.initTokenClient({ client_id: clientId, scope: 'https://www.googleapis.com/auth/drive.readonly', callback: r => r.error ? reject(new Error(r.error)) : resolve(r.access_token) });
-    client.requestAccessToken({ prompt: '' });
-  });
-}
-async function api(token, url) { const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } }); if (!r.ok) throw new Error(`Drive API ${r.status}`); return r.json(); }
-async function walk(token, rootId) {
-  const files = [];
-  async function visit(id, path, ancestors) {
-    let page = '';
-    do {
-      const q = encodeURIComponent(`'${id}' in parents and trashed = false`);
-      const fields = encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,version,size,webViewLink,thumbnailLink,parents)');
-      let url = `https://www.googleapis.com/drive/v3/files?q=${q}&pageSize=1000&fields=${fields}`;
-      if (page) url += `&pageToken=${encodeURIComponent(page)}`;
-      const data = await api(token, url);
-      for (const f of data.files || []) {
-        if (f.mimeType === FOLDER_MIME) {
-          const info = { id: f.id, name: f.name };
-          await visit(f.id, [...path, f.name], [...ancestors, info]);
-        } else files.push({ ...f, folderPath: path, ancestors });
-      }
-      page = data.nextPageToken || '';
-    } while (page);
-  }
-  await visit(rootId, [], []);
-  return { files };
-}
-function buildVariants(root, walked) {
-  const groups = new Map();
-  for (const file of walked.files) {
-    if (!ASSET_EXT.test(file.name)) continue;
-    const volume = parseVolume(file.name) || nearestVolume(file.folderPath);
-    const size = parseSize(file.name) || nearestSize(file.folderPath);
-    const productName = productFromFile(file.name, file.folderPath);
-    if (!productName && !volume && !size) continue;
-    const vId = variantFolderId(file, file.ancestors);
-    const fallback = `fallback:${norm(productName)}|${norm(volume)}|${norm(size)}`;
-    const key = `${root.id}|${vId || fallback}`;
-    if (!groups.has(key)) groups.set(key, { productName, volume, size, variantFolderId: vId, assets: [], driveRootFolderId: root.id, driveRootFolderUrl: root.webViewLink || driveUrl(root.id), sourceFolderPath: file.folderPath.join(' / ') });
-    const g = groups.get(key);
-    if (!g.productName && productName) g.productName = productName;
-    if (!g.volume && volume) g.volume = volume;
-    if (!g.size && size) g.size = size;
-    g.assets.push({ id: file.id, name: file.name, mimeType: file.mimeType || '', modifiedTime: file.modifiedTime || '', version: file.version || '', size: file.size || '', webViewLink: file.webViewLink || `https://drive.google.com/open?id=${file.id}`, thumbnailLink: file.thumbnailLink || '', folderPath: file.folderPath.join(' / '), role: roleFromPath(file, file.folderPath) });
-  }
-  for (const g of groups.values()) {
-    const images = g.assets.filter(a => IMAGE_EXT.test(a.name) || /^image\//i.test(a.mimeType));
-    images.sort((a,b) => (a.role === 'final' ? -1 : 0) - (b.role === 'final' ? -1 : 0) || String(b.modifiedTime).localeCompare(String(a.modifiedTime)));
-    const preview = images[0] || g.assets[0];
-    g.previewFileId = preview?.id || '';
-    g.previewFileName = preview?.name || '';
-  }
-  return [...groups.values()];
-}
-function mergeRecord(records, v, month) {
-  const r = records.find(x => {
-    if (v.variantFolderId && x.driveVariantFolderId) return x.driveVariantFolderId === v.variantFolderId;
-    return norm(x.productName) === norm(v.productName) && norm(x.volume) === norm(v.volume) && norm(x.size) === norm(v.size);
-  });
-  const record = r || { id: uid(), month, date: new Date().toISOString().slice(0,10), quantity: 1, designer: '', editTypes: [], createdAt: new Date().toISOString() };
-  const old = new Map((record.assets || []).map(a => [a.id, a]));
-  Object.assign(record, { productName: v.productName || record.productName || '', volume: v.volume || record.volume || '', size: v.size || record.size || '', driveRootFolderId: v.driveRootFolderId, driveRootFolderUrl: v.driveRootFolderUrl, driveVariantFolderId: v.variantFolderId || record.driveVariantFolderId || '', driveFolderUrl: v.driveRootFolderUrl, driveFileId: v.previewFileId || record.driveFileId || '', sourceFileName: v.previewFileName || record.sourceFileName || '', sourceFolderPath: v.sourceFolderPath || record.sourceFolderPath || '', assets: v.assets.map(a => ({ ...(old.get(a.id) || {}), ...a })), drivePresent: true, lastDriveSync: new Date().toISOString() });
-  if (!r) records.push(record);
-  return record;
-}
-async function autoSync() {
-  const settings = readJson(SETTINGS, {}); const records = readJson(STORE, []);
-  const roots = [...new Set(records.map(r => r.driveRootFolderId || driveId(r.driveRootFolderUrl || r.driveFolderUrl)).filter(Boolean))];
-  if (!roots.length || !settings.googleClientId) return;
-  let token; try { token = await tokenFromGIS(settings.googleClientId); } catch { return; }
-  const month = new Date().toISOString().slice(0,7); let changed = false;
-  for (const rootId of roots) {
-    try {
-      const root = await api(token, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(rootId)}?fields=id,name,mimeType,webViewLink,modifiedTime`);
-      if (root.mimeType !== FOLDER_MIME) continue;
-      const result = buildVariants(root, await walk(token, rootId));
-      const rootRecords = records.filter(r => r.driveRootFolderId === rootId);
-      const seen = new Set();
-      for (const v of result) { const r = mergeRecord(records, v, month); seen.add(r.id); changed = true; }
-      for (const r of rootRecords) if (!seen.has(r.id)) { r.drivePresent = false; r.lastDriveSync = new Date().toISOString(); changed = true; }
-    } catch (e) { console.warn('[Drive Sync]', rootId, e); }
-  }
-  if (changed) { writeRecords(records); setTimeout(() => location.reload(), 150); }
-}
-function waitForGISAndSync(attempt = 0) {
-  if (attempt > 40) return;
-  const settings = readJson(SETTINGS, {});
-  if (settings.googleClientId && window.google?.accounts?.oauth2) { autoSync(); return; }
-  setTimeout(() => waitForGISAndSync(attempt + 1), 250);
-}
-window.addEventListener('load', () => waitForGISAndSync());
+const STORE='ventek-design-tracker-v2',SETTINGS='ventek-design-settings-v2';
+const FOLDER_MIME='application/vnd.google-apps.folder',IMAGE_EXT=/\.(png|jpe?g|webp|gif|bmp|tiff?|svg)$/i,ASSET_EXT=/\.(png|jpe?g|webp|gif|bmp|tiff?|svg|pdf|ai|psd|eps|indd|zip)$/i;
+const ASSET_FOLDER_RE=/^(?:\d{1,2}\s*[-_.]\s*)?(final|source|mockup|draft|preview|output|print|artwork|file)$/i,VOLUME_RE=/^(?:\d{1,4}(?:[.,]\d+)?)\s?(?:ml|cl|l|lit|liter|litre)$/i,SIZE_RE=/^(?:A[0-6]|\d{2,5}\s*[x×]\s*\d{2,5})$/i;
+const VOL=/(?<!\w)(\d+(?:[.,]\d+)?)\s?(ml|cl|l|lit|liter|litre)(?!\w)/i,SIZ=/\b(\d{2,5}\s*[x×]\s*\d{2,5}|A[0-6])\b/i;
+const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+const clean=s=>String(s||'').replace(/\.[^.]+$/,'').replace(/^\d{1,2}\s*[-_.]\s*/,'').replace(/[_-]+$/,'').replace(/^[_-]+/,'').trim();
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(d))}catch{return d}};
+const uid=()=>crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const driveId=input=>{const s=String(input||'').trim();for(const r of [/\/folders\/([\w-]+)/,/[?&]id=([\w-]+)/,/\/d\/([\w-]+)/]){const m=s.match(r);if(m)return m[1]}return /^[\w-]{10,}$/.test(s)?s:''};
+const driveUrl=id=>`https://drive.google.com/drive/folders/${id}`;
+function volume(s){const m=String(s||'').match(VOL);if(!m)return '';return `${m[1].replace(',','.')}${m[2].toLowerCase()==='ml'?'ml':m[2].toLowerCase()==='cl'?'cl':'L'}`}
+function size(s){const m=String(s||'').match(SIZ);return m?m[1].replace(/\s+/g,'').replace('×','x').toUpperCase():''}
+function product(name,path){const raw=clean(name);let p=raw.replace(VOL,'').replace(SIZ,'').replace(/\b(final|source|mockup|draft|preview|output|print|artwork|design|image|img|update)\b/ig,'').replace(/[_-]+/g,' ').replace(/\s{2,}/g,' ').trim();if(!p||/^(final|source|mockup|draft|preview|output|design|image|img|update)$/i.test(p))p=[...path].reverse().find(x=>x&&!ASSET_FOLDER_RE.test(x)&&!VOLUME_RE.test(x)&&!SIZE_RE.test(x))||'';return clean(p)}
+const nearest=(path,fn)=>[...path].reverse().map(fn).find(Boolean)||'';
+function variantId(anc){const c=[...(anc||[])].reverse().find(x=>x.id&&!ASSET_FOLDER_RE.test(x.name));if(!c)return '';return volume(c.name)||size(c.name)||VOLUME_RE.test(c.name.trim())||SIZE_RE.test(c.name.trim())?c.id:''}
+function role(file,path){const f=[...path].reverse().find(x=>ASSET_FOLDER_RE.test(x));if(f)return clean(f).replace(/^\d{1,2}\s*[-_.]\s*/,'').toLowerCase();if(/final/i.test(file.name))return'final';if(/mockup/i.test(file.name))return'mockup';if(/source/i.test(file.name))return'source';return'asset'}
+async function gisToken(clientId){if(!window.google?.accounts?.oauth2)throw Error('GIS unavailable');return new Promise((ok,no)=>{const c=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:'https://www.googleapis.com/auth/drive.readonly',callback:r=>r.error?no(Error(r.error)):ok(r.access_token)});c.requestAccessToken({prompt:''})})}
+async function api(t,u){const r=await fetch(u,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Drive API ${r.status}`);return r.json()}
+async function walk(t,root){const files=[];async function visit(id,path,anc){let page='';do{const q=encodeURIComponent(`'${id}' in parents and trashed = false`),f=encodeURIComponent('nextPageToken,files(id,name,mimeType,modifiedTime,version,size,webViewLink,thumbnailLink)');let u=`https://www.googleapis.com/drive/v3/files?q=${q}&pageSize=1000&fields=${f}`;if(page)u+=`&pageToken=${encodeURIComponent(page)}`;const d=await api(t,u);for(const x of d.files||[]){if(x.mimeType===FOLDER_MIME)await visit(x.id,[...path,x.name],[...anc,{id:x.id,name:x.name}]);else files.push({...x,folderPath:path,ancestors:anc})}page=d.nextPageToken||''}while(page)}await visit(root,[],[]);return files}
+function variants(root,files){const groups=new Map();for(const file of files){if(!ASSET_EXT.test(file.name))continue;const v=volume(file.name)||nearest(file.folderPath,volume),s=size(file.name)||nearest(file.folderPath,size),p=product(file.name,file.folderPath);if(!p&&!v&&!s)continue;const vid=variantId(file.ancestors),fallback=`fallback:${norm(p)}|${norm(v)}|${norm(s)}`,key=`${root.id}|${vid||fallback}`;if(!groups.has(key))groups.set(key,{productName:p,volume:v,size:s,variantFolderId:vid,driveRootFolderId:root.id,driveRootFolderUrl:root.webViewLink||driveUrl(root.id),sourceFolderPath:file.folderPath.join(' / '),assets:[]});const g=groups.get(key);g.productName||=p;g.volume||=v;g.size||=s;g.assets.push({id:file.id,name:file.name,mimeType:file.mimeType||'',modifiedTime:file.modifiedTime||'',version:file.version||'',size:file.size||'',webViewLink:file.webViewLink||`https://drive.google.com/open?id=${file.id}`,thumbnailLink:file.thumbnailLink||'',folderPath:file.folderPath.join(' / '),role:role(file,file.folderPath)})}for(const g of groups.values()){const imgs=g.assets.filter(a=>IMAGE_EXT.test(a.name)||/^image\//i.test(a.mimeType));imgs.sort((a,b)=>(a.role==='final'?-1:0)-(b.role==='final'?-1:0)||String(b.modifiedTime).localeCompare(String(a.modifiedTime)));const pr=imgs[0]||g.assets[0];g.previewFileId=pr?.id||'';g.previewFileName=pr?.name||''}return[...groups.values()]}
+function upsert(records,v,month){let r=records.find(x=>v.variantFolderId&&x.driveVariantFolderId===v.variantFolderId);if(!r)r=records.find(x=>norm(x.productName)===norm(v.productName)&&norm(x.volume)===norm(v.volume)&&norm(x.size)===norm(v.size));if(!r){r={id:uid(),month,date:new Date().toISOString().slice(0,10),quantity:1,designer:'',editTypes:[],createdAt:new Date().toISOString()};records.push(r)}Object.assign(r,{productName:v.productName||r.productName||'',volume:v.volume||r.volume||'',size:v.size||r.size||'',driveRootFolderId:v.driveRootFolderId,driveRootFolderUrl:v.driveRootFolderUrl,driveVariantFolderId:v.variantFolderId||r.driveVariantFolderId||'',driveFolderUrl:v.driveRootFolderUrl,driveFileId:v.previewFileId||r.driveFileId||'',sourceFileName:v.previewFileName||r.sourceFileName||'',sourceFolderPath:v.sourceFolderPath||r.sourceFolderPath||'',assets:v.assets,drivePresent:true,lastDriveSync:new Date().toISOString()});return r}
+async function scan(rootId,token){const root=await api(token,`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(rootId)}?fields=id,name,mimeType,webViewLink`);if(root.mimeType!==FOLDER_MIME)throw Error('Link phải trỏ tới một thư mục Google Drive.');return{root,items:variants(root,await walk(token,rootId))}}
+async function runManual(modal){const status=modal.querySelector('#status'),url=modal.querySelector('#drive').value.trim(),id=driveId(url);if(!id)throw Error('Link Drive không hợp lệ.');const settings=load(SETTINGS,{});if(!settings.googleClientId)throw Error('Chưa cấu hình Google OAuth Client ID.');status.className='scan-status';status.textContent='Đang đọc toàn bộ thư mục và file bên trong…';const token=await gisToken(settings.googleClientId);const result=await scan(id,token);modal._ventekScan={...result,link:url};status.className='scan-status ok';status.textContent=`Đã đọc ${result.items.reduce((n,v)=>n+v.assets.length,0)} file → ${result.items.length} variant.`;const pre=modal.querySelector('#preview');pre.innerHTML=`<div class="preview"><table><thead><tr><th>Ảnh</th><th>Sản phẩm</th><th>Thể tích</th><th>Kích thước</th><th>Số lượng</th><th>Assets</th></tr></thead><tbody>${result.items.map((v,i)=>`<tr><td>${v.previewFileName?'✓':'—'}</td><td><input data-v="productName" data-i="${i}" value="${esc(v.productName)}"></td><td><input data-v="volume" data-i="${i}" value="${esc(v.volume)}"></td><td><input data-v="size" data-i="${i}" value="${esc(v.size)}"></td><td><input class="tiny" type="number" min="1" data-v="quantity" data-i="${i}" value="1"></td><td>${v.assets.length} file</td></tr>`).join('')}</tbody></table></div>`;pre.querySelectorAll('[data-v]').forEach(e=>e.oninput=()=>result.items[+e.dataset.i][e.dataset.v]=e.dataset.v==='quantity'?Math.max(1,+e.value||1):e.value);modal.querySelector('#confirm').disabled=!result.items.length}
+async function handleScan(e){const b=e.target.closest?.('#scan');if(!b)return;const modal=b.closest('.modal');if(!modal)return;e.preventDefault();e.stopImmediatePropagation();try{await runManual(modal)}catch(err){const s=modal.querySelector('#status');s.className='scan-status err';s.textContent=err.message}}
+function handleConfirm(e){const b=e.target.closest?.('#confirm');if(!b)return;const modal=b.closest('.modal');if(!modal||!modal._ventekScan)return;e.preventDefault();e.stopImmediatePropagation();const s=modal._ventekScan,month=modal.querySelector('#m').value,designer=modal.querySelector('#d').value,editTypes=[...modal.querySelector('#e').selectedOptions].map(o=>o.value);if(!editTypes.length){alert('Chọn ít nhất một loại công việc.');return}const records=load(STORE,[]);for(const v of s.items){const r=upsert(records,v,month);r.month=month;r.designer=designer;r.editTypes=editTypes;r.quantity=Number(v.quantity)||1;r.date=new Date().toISOString().slice(0,10)}localStorage.setItem(STORE,JSON.stringify(records));location.reload()}
+document.addEventListener('click',handleScan,true);document.addEventListener('click',handleConfirm,true);
+async function autoSync(){const settings=load(SETTINGS,{}),records=load(STORE,[]),roots=[...new Set(records.map(r=>r.driveRootFolderId||driveId(r.driveRootFolderUrl||r.driveFolderUrl)).filter(Boolean))];if(!roots.length||!settings.googleClientId)return;let token;try{token=await gisToken(settings.googleClientId)}catch{return}let changed=false;for(const rootId of roots){try{const r=await scan(rootId,token),seen=new Set();for(const v of r.items){const x=upsert(records,v,new Date().toISOString().slice(0,7));seen.add(x.id);changed=true}for(const x of records.filter(x=>x.driveRootFolderId===rootId))if(!seen.has(x.id)){x.drivePresent=false;x.lastDriveSync=new Date().toISOString();changed=true}}catch(err){console.warn('[Ventek Drive Sync]',err)}}if(changed){localStorage.setItem(STORE,JSON.stringify(records));setTimeout(()=>location.reload(),150)}}
+function esc(v=''){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+function wait(n=0){if(n>40)return;const s=load(SETTINGS,{});if(s.googleClientId&&window.google?.accounts?.oauth2){autoSync();return}setTimeout(()=>wait(n+1),250)}
+window.addEventListener('load',()=>wait());
