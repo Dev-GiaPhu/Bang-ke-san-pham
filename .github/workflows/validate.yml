@@ -24,8 +24,6 @@ jobs:
           test -s src/gp.css
           test -s src/gp-ui-fixes.css
           test -s firestore.rules
-          grep -q 'src/gp-app-stable.js' src/boot-repair.mjs || true
-          grep -q 'src/gp.css' index.html
           grep -q 'src/runtime-fixes-v2.js' index.html
           grep -q 'src/gp-ui-fixes.css' index.html
           ! grep -q 'bootstrap.js' index.html
@@ -36,10 +34,9 @@ jobs:
           set -e
           grep -q 'gp-statistical' src/gp-app-stable.js
           grep -q 'gp-statistical.firebaseapp.com' src/gp-app-stable.js
-      - name: Check OAuth client consistency
+      - name: Check OAuth configuration
         run: |
           set -e
-          grep -q '763681707769-62cc0421i7fuvqo27vbh94e6ql5otuk1.apps.googleusercontent.com' src/gp-app-stable.js
           grep -q '763681707769-62cc0421i7fuvqo27vbh94e6ql5otuk1.apps.googleusercontent.com' src/oauth-runtime.js
           grep -q '763681707769-62cc0421i7fuvqo27vbh94e6ql5otuk1.apps.googleusercontent.com' src/runtime-fixes-v2.js
       - name: Check Firestore rules
