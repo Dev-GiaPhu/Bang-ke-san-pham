@@ -1,29 +1,24 @@
 import './firebase-init.js';
 
-const root = document.querySelector('#app');
+(function () {
+  var root = document.getElementById('app');
 
-function showFatal(error) {
-  console.error('GP Statistical startup error:', error);
-  if (!root) return;
-  root.innerHTML = `
-    <div class="gate">
-      <div class="gate-card">
-        <div class="gate-kicker">GP STATISTICAL</div>
-        <h1>Chưa thể mở trang.</h1>
-        <p>Trang gặp sự cố khi khởi động. Hãy tải lại trang; nếu vẫn xảy ra, gửi ảnh màn hình này để được hỗ trợ.</p>
-        <details style="margin:18px 0;text-align:left">
-          <summary>Thông tin chi tiết</summary>
-          <pre style="white-space:pre-wrap;word-break:break-word;margin-top:10px">${String(error?.stack || error?.message || error)}</pre>
-        </details>
-        <button class="btn" onclick="location.reload()">Tải lại trang</button>
-      </div>
-    </div>`;
-}
+  function showFatal(error) {
+    if (!root) return;
+    console.error('GP Statistical startup error:', error);
+    var wrap = document.createElement('div');
+    wrap.className = 'gate';
+    wrap.innerHTML = '<div class="gate-card"><div class="gate-kicker">GP STATISTICAL</div><h1>Chưa thể mở trang.</h1><p>Trang gặp sự cố khi khởi động. Hãy tải lại trang; nếu vẫn xảy ra, gửi ảnh màn hình này để được hỗ trợ.</p><details><summary>Thông tin chi tiết</summary><pre id="gp-startup-error"></pre></details><button class="btn" id="gp-startup-retry">Tải lại trang</button></div>';
+    root.replaceChildren(wrap);
+    var pre = document.getElementById('gp-startup-error');
+    if (pre) pre.textContent = String((error && error.stack) || (error && error.message) || error || 'Không có thông tin chi tiết.');
+    var btn = document.getElementById('gp-startup-retry');
+    if (btn) btn.onclick = function () { location.reload(); };
+  }
 
-try {
-  await import('./production-suite.js');
-  await import('./permission-mail.js');
-  await import('./production-runtime.js');
-} catch (error) {
-  showFatal(error);
-}
+  Promise.resolve()
+    .then(function () { return import('./production-suite.js'); })
+    .then(function () { return import('./permission-mail.js'); })
+    .then(function () { return import('./production-runtime.js'); })
+    .catch(showFatal);
+})();
