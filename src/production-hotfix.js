@@ -1,102 +1,324 @@
 import { getApps, getApp } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
-import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, writeBatch, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js';
+import { getAuth } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
+import { getFirestore, doc, getDoc, setDoc, addDoc, collection, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js';
 
-const app=getApps()[0]||getApp();
-const auth=getAuth(app);
-const db=getFirestore(app);
-const WORKSPACE='gp-statistical';
-const DRIVE_SESSION='gp-drive-token-v1';
-const EMAIL_KEY=e=>btoa(unescape(encodeURIComponent(e))).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,120)||'invite';
-const norm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
-let gisPatched=false;
+const app = getApps()[0] || getApp();
+const auth = getAuth(app);
+const db = getFirestore(app);
+const WORKSPACE = 'gp-statistical';
+const DRIVE_FULL_SESSION = 'gp-drive-full-token-v1';
+const DRIVE_CLIENT_LOCAL = 'gp-member-drive-client-v1';
+const INVITE_KEY = email => btoa(unescape(encodeURIComponent(String(email).toLowerCase()))).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120) || 'invite';
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const norm = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
-function patchGoogleTokenClient(){
-  try{
-    const oauth=window.google?.accounts?.oauth2;
-    if(!oauth?.initTokenClient||oauth.initTokenClient.__gpWrapped)return false;
-    const original=oauth.initTokenClient.bind(oauth);
-    function wrapped(config){
-      const cfg={...config};
-      const userCallback=cfg.callback;
-      cfg.callback=(response)=>{
-        if(response?.access_token && /drive\.readonly/.test(String(cfg.scope||''))){try{sessionStorage.setItem(DRIVE_SESSION,response.access_token)}catch{}}
-        return userCallback?.(response);
-      };
-      const client=original(cfg);
-      const origRequest=client.requestAccessToken.bind(client);
-      client.requestAccessToken=(params={})=>{
-        const silent=params?.prompt==='' && /drive\.readonly/.test(String(cfg.scope||''));
-        if(silent){
-          let saved='';try{saved=sessionStorage.getItem(DRIVE_SESSION)||''}catch{}
-          if(saved){
-            fetch('https://www.googleapis.com/drive/v3/about?fields=user',{headers:{Authorization:`Bearer ${saved}`}})
-              .then(r=>{if(!r.ok)throw Error('expired');return r.json()})
-              .then(()=>cfg.callback({access_token:saved,expires_in:1800,scope:cfg.scope}))
-              .catch(()=>{try{sessionStorage.removeItem(DRIVE_SESSION)}catch{};cfg.callback({error:'login_required',error_description:'Kết nối Google Drive cần được kết nối lại.'})});
-            return;
-          }
-          cfg.callback({error:'login_required',error_description:'Kết nối Google Drive chưa được khôi phục tự động.'});
-          return;
-        }
-        return origRequest(params);
-      };
-      return client;
+function toast(message) {
+  if (typeof window.toast === 'function') return window.toast(message);
+  let x = document.querySelector('.toast');
+  if (!x) { x = document.createElement('div'); x.className = 'toast'; document.body.appendChild(x); }
+  x.textContent = message;
+  x.classList.add('show');
+  clearTimeout(x._gpTimer);
+  x._gpTimer = setTimeout(() => x.classList.remove('show'), 3000);
+}
+
+function isOwner() {
+  return document.querySelector('.connection span')?.textContent?.trim() === 'Chủ sở hữu';
+}
+
+function patchStats(root) {
+  root.querySelectorAll('.stat').forEach(card => {
+    const label = card.querySelector(':scope > span')?.textContent?.trim();
+    if (label !== 'TỔNG SỐ SẢN PHẨM') return;
+    card.classList.add('gp-product-stat');
+    const breakdown = [...card.children].find(x => x.tagName === 'DIV' && !x.classList.contains('stat-breakdown'));
+    if (!breakdown) return;
+    breakdown.classList.add('gp-stat-breakdown');
+  });
+}
+
+function rowData(tr) {
+  const cells = tr.children;
+  const work = [...(cells[7]?.querySelectorAll('.pill') || [])].map(x => x.textContent.trim()).filter(Boolean);
+  return {
+    customer: cells[1]?.textContent.trim() || '',
+    product: cells[2]?.textContent.trim() || '',
+    volume: cells[4]?.textContent.trim() || '',
+    designer: cells[6]?.textContent.trim() || '',
+    work,
+    month: (cells[8]?.textContent.trim() || '').slice(0, 7),
+    search: norm(tr.dataset.rowText || '')
+  };
+}
+
+function shareRows(page) {
+  return [...page.querySelectorAll('.table-card tbody tr[data-row="1]'.replace('1]','1"]'))];
+}
+
+function refreshPublicFilterOptions(bar, rows) {
+  const collect = field => [...new Set(rows.map(rowData).flatMap(x => Array.isArray(x[field]) ? x[field] : [x[field]]).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'vi'));
+  const configs = [
+    ['customer', 'Tất cả khách hàng'],
+    ['designer', 'Tất cả người thực hiện'],
+    ['work', 'Tất cả loại công việc'],
+    ['month', 'Tất cả tháng']
+  ];
+  configs.forEach(([field, allLabel]) => {
+    const select = bar.querySelector(`[data-gp-public-${field}]`);
+    if (!select) return;
+    const old = select.value;
+    const values = collect(field);
+    select.innerHTML = `<option value="">${allLabel}</option>${values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('')}`;
+    if (values.includes(old)) select.value = old;
+  });
+}
+
+function applyPublicFilters(page) {
+  const bar = page.querySelector('[data-gp-public-filter]');
+  if (!bar) return;
+  const customer = bar.querySelector('[data-gp-public-customer]')?.value || '';
+  const designer = bar.querySelector('[data-gp-public-designer]')?.value || '';
+  const work = bar.querySelector('[data-gp-public-work]')?.value || '';
+  const month = bar.querySelector('[data-gp-public-month]')?.value || '';
+  const search = norm(bar.querySelector('[data-gp-public-search]')?.value || '');
+  page.querySelectorAll('.table-card tbody tr[data-row="1"]').forEach(tr => {
+    const x = rowData(tr);
+    tr.hidden = !!(
+      (customer && x.customer !== customer) ||
+      (designer && x.designer !== designer) ||
+      (work && !x.work.includes(work)) ||
+      (month && x.month !== month) ||
+      (search && !x.search.includes(search))
+    );
+  });
+}
+
+function patchPublicShare() {
+  const page = document.querySelector('.shared-page');
+  if (!page) return;
+
+  // The public page used to render a second copy of Chia sẻ / Excel / PDF in tableCard.
+  page.querySelector('.table-card > .toolbar .actions')?.remove();
+
+  let bar = page.querySelector('[data-gp-public-filter]');
+  if (!bar) {
+    const old = page.querySelector(':scope > .filters');
+    bar = document.createElement('div');
+    bar.className = 'filters gp-filterbar';
+    bar.setAttribute('data-gp-public-filter', '1');
+    bar.innerHTML = `
+      <select class="input" data-gp-public-customer><option value="">Tất cả khách hàng</option></select>
+      <select class="input" data-gp-public-designer><option value="">Tất cả người thực hiện</option></select>
+      <select class="input" data-gp-public-work><option value="">Tất cả loại công việc</option></select>
+      <select class="input" data-gp-public-month><option value="">Tất cả tháng</option></select>
+      <input class="input wide" data-gp-public-search placeholder="Tìm kiếm…">
+      <button class="btn ghost" data-gp-public-clear>Xóa lọc</button>`;
+    const oldSearch = old?.querySelector('input')?.value || '';
+    if (oldSearch) bar.querySelector('[data-gp-public-search]').value = oldSearch;
+    old?.replaceWith(bar);
+  }
+
+  const rows = [...page.querySelectorAll('.table-card tbody tr[data-row="1"]')];
+  refreshPublicFilterOptions(bar, rows);
+  if (bar.dataset.gpBound !== '1') {
+    bar.dataset.gpBound = '1';
+    bar.addEventListener('input', () => applyPublicFilters(page));
+    bar.addEventListener('change', () => applyPublicFilters(page));
+    bar.querySelector('[data-gp-public-clear]').onclick = () => {
+      bar.querySelectorAll('select').forEach(s => s.value = '');
+      bar.querySelector('[data-gp-public-search]').value = '';
+      applyPublicFilters(page);
+    };
+  }
+  applyPublicFilters(page);
+}
+
+async function workspaceData() {
+  const snap = await getDoc(doc(db, 'workspaces', WORKSPACE));
+  return snap.exists() ? (snap.data() || {}) : {};
+}
+
+async function validDriveToken(token) {
+  if (!token) return false;
+  try {
+    const r = await fetch('https://www.googleapis.com/drive/v3/about?fields=user', {headers:{Authorization:`Bearer ${token}`} });
+    return r.ok;
+  } catch { return false; }
+}
+
+async function requestFullDriveToken(clientId) {
+  if (!clientId) throw Error('Chưa có mã ứng dụng Google Drive của workspace.');
+  if (!window.google?.accounts?.oauth2?.initTokenClient) throw Error('Google Drive chưa sẵn sàng.');
+  return new Promise((resolve, reject) => {
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: 'https://www.googleapis.com/auth/drive',
+      include_granted_scopes: true,
+      callback: r => r?.access_token ? resolve(r.access_token) : reject(Error(r?.error_description || r?.error || 'Không thể cấp quyền quản lý Google Drive.'))
+    });
+    client.requestAccessToken({prompt:'consent'});
+  });
+}
+
+async function ownerDriveToken() {
+  let token = '';
+  try { token = sessionStorage.getItem(DRIVE_FULL_SESSION) || ''; } catch {}
+  if (await validDriveToken(token)) return token;
+  try { sessionStorage.removeItem(DRIVE_FULL_SESSION); } catch {}
+  const ws = await workspaceData();
+  const settings = ws.settings || {};
+  const clientId = settings.googleClientId || '';
+  if (!clientId) throw Error('Chưa cấu hình Google Drive Client ID.');
+  token = await requestFullDriveToken(clientId);
+  try { sessionStorage.setItem(DRIVE_FULL_SESSION, token); } catch {}
+  return token;
+}
+
+async function drivePermissionExists(token, folderId, email) {
+  const u = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}/permissions?fields=permissions(id,type,emailAddress,role)&pageSize=100&supportsAllDrives=true`;
+  const r = await fetch(u, {headers:{Authorization:`Bearer ${token}`} });
+  if (!r.ok) return false;
+  const j = await r.json();
+  return (j.permissions || []).some(p => p.type === 'user' && String(p.emailAddress || '').toLowerCase() === email);
+}
+
+async function grantDriveFolder(token, folderId, email, role) {
+  if (!folderId) return false;
+  const lower = email.toLowerCase();
+  if (await drivePermissionExists(token, folderId, lower)) return true;
+  const u = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}/permissions?sendNotificationEmail=true&supportsAllDrives=true&fields=id,emailAddress,role,type`;
+  const r = await fetch(u, {
+    method:'POST',
+    headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/json'},
+    body:JSON.stringify({type:'user',role:role==='editor'?'writer':'reader',emailAddress:lower})
+  });
+  if (r.ok) return true;
+  // Existing/inherited permissions are harmless for this workflow.
+  if (r.status === 400 || r.status === 409) return true;
+  let msg = '';
+  try { msg = (await r.json()).error?.message || ''; } catch {}
+  throw Error(msg || `Google Drive không thể cấp quyền (${r.status}).`);
+}
+
+async function autoProvisionDrive(email, role) {
+  const products = await getDocs(collection(db, 'workspaces', WORKSPACE, 'products'));
+  const roots = [...new Set(products.docs.map(d => d.data()?.driveRootFolderId).filter(Boolean))];
+  if (!roots.length) return {count:0, roots:[]};
+  const token = await ownerDriveToken();
+  const done = [];
+  for (const root of roots) {
+    try { if (await grantDriveFolder(token, root, email, role)) done.push(root); } catch (e) { console.warn('Drive permission', root, e); }
+  }
+  return {count:done.length, roots:done};
+}
+
+async function correctedInvite() {
+  if (!isOwner()) return false;
+  const input = document.querySelector('#gp-invite-email');
+  const email = input?.value.trim().toLowerCase() || '';
+  if (!email || !email.includes('@')) { toast('Nhập đúng địa chỉ Gmail.'); return true; }
+  const role = document.querySelector('#gp-invite-role')?.value === 'editor' ? 'editor' : 'viewer';
+  const canInvite = document.querySelector('#gp-invite-caninvite')?.value === 'yes';
+  const driveAccess = document.querySelector('#gp-invite-drive')?.value === 'yes';
+  const owner = auth.currentUser;
+  if (!owner?.uid) { toast('Phiên đăng nhập đã hết.'); return true; }
+  try {
+    const payload = {
+      email,
+      role,
+      canInvite,
+      driveAccess,
+      workspaceId: WORKSPACE,
+      createdBy: owner.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+    // Raw e-mail key is required by Firestore rules for self-acceptance; encoded key is kept for backward compatibility.
+    await setDoc(doc(db, 'workspaces', WORKSPACE, 'invites', email), payload, {merge:true});
+    await setDoc(doc(db, 'workspaces', WORKSPACE, 'invites', INVITE_KEY(email)), payload, {merge:true});
+
+    let driveResult = {count:0};
+    let driveMessage = 'Không cấp Drive.';
+    if (driveAccess) {
+      driveResult = await autoProvisionDrive(email, role);
+      driveMessage = driveResult.count ? `Đã cấp Drive cho ${driveResult.count} thư mục.` : 'Chưa có thư mục Drive nào để cấp.';
     }
-    wrapped.__gpWrapped=true;
-    oauth.initTokenClient=wrapped;
-    gisPatched=true;
-    return true;
-  }catch{return false}
-}
-function waitForGIS(){if(patchGoogleTokenClient())return;setTimeout(waitForGIS,250)}
-waitForGIS();
 
-async function ensureInvitedMember(user){
-  if(!user?.email)return;
-  const email=user.email.toLowerCase();
-  const member=await getDoc(doc(db,'workspaces',WORKSPACE,'members',user.uid));
-  if(member.exists())return;
-  let inv=await getDoc(doc(db,'workspaces',WORKSPACE,'invites',email));
-  if(!inv.exists())inv=await getDoc(doc(db,'workspaces',WORKSPACE,'invites',EMAIL_KEY(email)));
-  if(!inv.exists())return;
-  const x=inv.data();
-  if(String(x.email||'').toLowerCase()!==email)return;
-  await setDoc(doc(db,'workspaces',WORKSPACE,'members',user.uid),{uid:user.uid,email:user.email,displayName:user.displayName||'',role:x.role||'viewer',canInvite:!!x.canInvite,driveAccess:!!x.driveAccess,createdAt:serverTimestamp(),updatedAt:serverTimestamp()},{merge:true});
-  await updateDoc(inv.ref,{acceptedBy:user.uid,acceptedAt:serverTimestamp()}).catch(()=>{});
-}
-onAuthStateChanged(auth,u=>{if(u)setTimeout(()=>ensureInvitedMember(u).catch(()=>{}),250)});
-
-function toast(message){if(typeof window.toast==='function')window.toast(message);else{const x=document.querySelector('.toast');if(x){x.textContent=message;x.classList.add('show');setTimeout(()=>x.classList.remove('show'),2500)}}}
-function formatMonth(value){const m=String(value||'').match(/^(\d{4})-(\d{2})$/);return m?`${m[2]}/${m[1]}`:''}
-function formatDay(value){const m=String(value||'').match(/^\d{4}-\d{2}-(\d{2})$/);return m?m[1]:''}
-function parseMonth(v){const m=String(v||'').trim().match(/^(\d{1,2})\/(\d{4})$/);if(!m)return '';const mm=Number(m[1]);return mm>=1&&mm<=12?`${m[2]}-${String(mm).padStart(2,'0')}`:''}
-function buildDate(month,day){return month&&/^\d{2}$/.test(day)?`${month}-${day}`:''}
-
-async function openEditor(id,fromShare=false){
-  let record=null;let share='';
-  if(fromShare){share=(location.hash.match(/^#share=([A-Za-z0-9_-]+)$/)||[])[1]||'';if(!share)return;const snap=await getDoc(doc(db,'workspaces',WORKSPACE,'shares',share,'products',id));if(!snap.exists())return;record=snap.data()}
-  else{const snap=await getDoc(doc(db,'workspaces',WORKSPACE,'products',id));if(!snap.exists())return;record=snap.data()}
-  const local=(()=>{try{return JSON.parse(localStorage.getItem('ventek-design-settings-v2')||'{}')}catch{return{}}})();
-  const types=Array.from(new Set([...(local.editTypes||['Design mới','Sửa thông tin','Update thông tin','Sửa kích thước']),'Khác']));
-  const other=(record.editTypes||[]).find(x=>String(x).startsWith('Khác:'));
-  const w=document.createElement('div');w.className='modal-backdrop';
-  w.innerHTML=`<div class="modal large"><div class="modal-head"><div><h2>Sửa thông tin sản phẩm</h2><div class="muted">Thay đổi này chỉ cập nhật bảng kê.</div></div><button class="btn" data-gp-close>Đóng</button></div><div class="form-grid"><label class="field"><label>Khách hàng</label><input id="hx-c" class="input" value="${esc(record.customer||'')}"></label><label class="field"><label>Tháng</label><input id="hx-month" class="input" inputmode="numeric" maxlength="7" placeholder="MM/YYYY" value="${esc(formatMonth(record.month)||formatMonth(String(record.date||'').slice(0,7)))}"></label><label class="field"><label>Ngày</label><input id="hx-day" class="input" inputmode="numeric" maxlength="2" placeholder="DD" value="${esc(formatDay(record.date))}"></label><label class="field"><label>Số lượng</label><input id="hx-q" class="input" type="number" min="0" step="1" value="${esc(record.quantity??1)}"></label><label class="field"><label>Tên sản phẩm</label><input id="hx-p" class="input" value="${esc(record.productName||'')}"></label><label class="field"><label>Thể tích</label><input id="hx-v" class="input" value="${esc(record.volume||'')}"></label><label class="field"><label>Kích thước</label><input id="hx-s" class="input" value="${esc(record.size||'')}"></label><label class="field"><label>Người thực hiện</label><input id="hx-user" class="input" list="hx-designers" value="${esc(record.designer||'')}" placeholder="Chọn hoặc nhập tên"><datalist id="hx-designers"></datalist></label></div><label class="field"><label>Loại công việc</label><div id="hx-types" class="check-grid">${types.map((x,i)=>`<label class="check"><input type="checkbox" data-hx-type="${i}" ${x==='Khác'?(other?'checked':''):(record.editTypes||[]).includes(x)?'checked':''}><span>${esc(x)}</span></label>`).join('')}</div><div id="hx-other" class="other-work" ${other?'':'hidden'}><label>Chi tiết công việc khác</label><input id="hx-other-text" class="input" value="${esc(other?String(other).slice(5).trim():'')}" placeholder="Nhập nội dung…"></div></label><div class="actions" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-gp-close>Hủy</button><button class="btn primary" id="hx-save">Lưu thay đổi</button></div></div>`;
-  document.body.appendChild(w);
-  const dl=w.querySelector('#hx-designers');Array.from(new Set([...(local.designers||[]),record.designer||''].filter(Boolean))).forEach(x=>{const o=document.createElement('option');o.value=x;dl.appendChild(o)});
-  const otherIndex=types.indexOf('Khác');w.querySelectorAll('[data-hx-type]').forEach(c=>c.onchange=()=>{if(Number(c.dataset.hxType)===otherIndex)w.querySelector('#hx-other').hidden=!c.checked});
-  const close=()=>w.remove();w.querySelectorAll('[data-gp-close]').forEach(b=>b.onclick=close);
-  w.querySelector('#hx-month').oninput=e=>{e.target.value=e.target.value.replace(/[^0-9/]/g,'').slice(0,7)};w.querySelector('#hx-day').oninput=e=>{e.target.value=e.target.value.replace(/\D/g,'').slice(0,2)};
-  w.querySelector('#hx-save').onclick=async()=>{try{const month=parseMonth(w.querySelector('#hx-month').value);if(!month)throw Error('Tháng phải có dạng MM/YYYY.');const day=w.querySelector('#hx-day').value;const date=day?buildDate(month,day):'';const chosen=[...w.querySelectorAll('[data-hx-type]:checked')].map(x=>types[Number(x.dataset.hxType)]).filter(Boolean);if(chosen.includes('Khác')){const detail=w.querySelector('#hx-other-text').value.trim();if(!detail)throw Error('Hãy nhập chi tiết cho công việc khác.');chosen.splice(chosen.indexOf('Khác'),1,`Khác: ${detail}`)}const next={...record,customer:w.querySelector('#hx-c').value.trim(),month,date,quantity:Math.max(0,Number(w.querySelector('#hx-q').value)||0),productName:w.querySelector('#hx-p').value.trim(),volume:w.querySelector('#hx-v').value.trim(),size:w.querySelector('#hx-s').value.trim(),designer:w.querySelector('#hx-user').value.trim(),editTypes:chosen,updatedAt:serverTimestamp()};if(fromShare){if(!share)return;await setDoc(doc(db,'workspaces',WORKSPACE,'shares',share,'products',id),next,{merge:true});await setDoc(doc(db,'workspaces',WORKSPACE,'products',id),next,{merge:true})}else{await setDoc(doc(db,'workspaces',WORKSPACE,'products',id),next,{merge:true})}const shares=await getDocs(collection(db,'workspaces',WORKSPACE,'shares'));for(const sh of shares.docs){if(sh.data().active===true)await setDoc(doc(db,'workspaces',WORKSPACE,'shares',sh.id,'products',id),next,{merge:true})}close();toast('Đã lưu thay đổi')}catch(e){toast(e.message||String(e))}};
+    const appUrl = `${location.origin}${location.pathname}`;
+    await addDoc(collection(db, 'mail'), {
+      to: email,
+      workspaceId: WORKSPACE,
+      inviteEmail: email,
+      createdBy: owner.uid,
+      createdAt: serverTimestamp(),
+      message: {
+        subject: 'Lời mời tham gia GP Statistical',
+        text: `Bạn được mời tham gia GP Statistical với quyền ${role === 'editor' ? 'có thể chỉnh sửa' : 'chỉ xem'}. Mở: ${appUrl}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:32px;color:#142033"><div style="font-size:12px;font-weight:800;letter-spacing:3px;color:#ef6b3b">GP STATISTICAL</div><h1 style="font-size:34px;margin:18px 0 8px">Bạn được mời tham gia</h1><p>Bạn được mời với quyền <b>${role === 'editor' ? 'có thể chỉnh sửa' : 'chỉ xem'}</b>.</p><p><a href="${esc(appUrl)}" style="display:inline-block;background:#ef6b3b;color:#fff;text-decoration:none;padding:13px 20px;border-radius:10px;font-weight:700">Mở GP Statistical</a></p><p style="font-size:13px;color:#6f7784">Đăng nhập bằng đúng địa chỉ Gmail nhận được lời mời.</p>${driveAccess ? `<p style="font-size:13px;color:#6f7784">Quyền Google Drive được hệ thống cấp tự động; không cần thêm thủ công trong Google Drive.</p>` : ''}</div>`
+      }
+    });
+    input.value = '';
+    toast(`Đã mời ${email}. ${driveMessage}`);
+  } catch (e) {
+    toast(e.message || String(e));
+  }
+  return true;
 }
 
-async function hardDeleteShare(id,row){row?.remove();try{const q=await getDocs(collection(db,'workspaces',WORKSPACE,'shares',id,'products'));for(let i=0;i<q.docs.length;i+=400){const b=writeBatch(db);q.docs.slice(i,i+400).forEach(x=>b.delete(x.ref));await b.commit()}await deleteDoc(doc(db,'workspaces',WORKSPACE,'shares',id));toast('Đã xóa liên kết')}catch(e){toast(e.message||String(e));location.reload()}}
+function patchMemberDriveSettings() {
+  const card = [...document.querySelectorAll('.card')].find(x => x.querySelector('h2')?.textContent?.trim() === 'Kết nối Google Drive');
+  if (!card || isOwner()) return;
+  const p = card.querySelector('.field-help');
+  if (p) p.innerHTML = 'Quyền Google Drive được quản trị viên cấp theo Gmail. Bạn không cần nhập mã của quản trị viên.';
+  const actions = card.querySelector('.actions');
+  if (!actions) return;
+  const oldInput = actions.querySelector('#gp-client');
+  const oldSave = actions.querySelector('#gp-save-client');
+  oldInput?.remove(); oldSave?.remove();
+  if (!actions.querySelector('[data-gp-drive-status]')) {
+    const panel = document.createElement('div');
+    panel.setAttribute('data-gp-drive-status','1');
+    panel.className = 'gp-drive-member-panel';
+    panel.innerHTML = `<div class="gp-drive-status"><b>✓ Quyền Drive đã được cấp theo tài khoản</b><span>Các thư mục được quản trị viên chia sẻ sẽ mở bằng chính Gmail này.</span></div><details class="gp-drive-advanced"><summary>Mã kết nối riêng (chỉ dùng khi quản trị viên cung cấp)</summary><input id="gp-member-drive-client" class="input" placeholder="Nhập mã client riêng nếu được yêu cầu"><button class="btn" type="button" data-gp-save-member-client>Lưu mã này trên thiết bị</button></details>`;
+    actions.prepend(panel);
+    try { panel.querySelector('#gp-member-drive-client').value = localStorage.getItem(DRIVE_CLIENT_LOCAL) || ''; } catch {}
+    panel.querySelector('[data-gp-save-member-client]').onclick = () => {
+      try { localStorage.setItem(DRIVE_CLIENT_LOCAL, panel.querySelector('#gp-member-drive-client').value.trim()); } catch {}
+      toast('Đã lưu mã kết nối riêng trên thiết bị.');
+    };
+  }
+  const connectBtn = actions.querySelector('#gp-test-drive');
+  if (connectBtn) {
+    connectBtn.textContent = 'Mở Drive đã được cấp';
+    connectBtn.onclick = async () => {
+      const product = await getDocs(collection(db, 'workspaces', WORKSPACE, 'products'));
+      const url = product.docs.map(d => d.data()?.driveRootFolderUrl || d.data()?.driveFolderUrl).find(Boolean);
+      if (url) window.open(url, '_blank', 'noopener');
+      else toast('Chưa có thư mục Drive nào được cấp cho workspace.');
+    };
+  }
+}
 
-function patchStats(root){root.querySelectorAll('.stat-products').forEach(box=>{const legacy=box.querySelector(':scope > div:not(.stat-breakdown)');if(!legacy||box.querySelector('.stat-breakdown'))return;const text=legacy.textContent.trim();const out=document.createElement('div');out.className='stat-breakdown';const re=/([^:]+):\s*(\d+)/g;let m;let found=false;while((m=re.exec(text))){found=true;const row=document.createElement('div');row.className='stat-breakdown-row';row.innerHTML=`<span>${esc(m[1].trim())}</span><b>${m[2]}</b>`;out.appendChild(row)}if(found){legacy.remove();box.appendChild(out)}})}
-function patchSettings(){const c=document.querySelector('#gp-client');if(!c)return;const action=c.closest('.actions');const role=document.querySelector('.connection span')?.textContent||'';if(action&&role!=='Chủ sở hữu'){c.remove();action.querySelector('#gp-save-client')?.remove()}}
-function patchEditButtons(){document.querySelectorAll('[data-gp-edit]').forEach(b=>{if(b.dataset.gpHotfix==='1')return;b.dataset.gpHotfix='1';b.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();openEditor(b.dataset.gpEdit,!!location.hash.match(/^#share=/)).catch(err=>toast(err.message||String(err)))},true)})}
-function patchShareDeletes(){document.querySelectorAll('[data-share-delete]').forEach(b=>{if(b.dataset.gpHotfix==='1')return;b.dataset.gpHotfix='1';b.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();hardDeleteShare(b.dataset.shareDelete,b.closest('[data-share-row]')||b.closest('.share-row'))},true)})}
-function installDomPatch(){patchStats(document);patchSettings();patchEditButtons();patchShareDeletes();const obs=new MutationObserver(()=>{patchStats(document);patchSettings();patchEditButtons();patchShareDeletes()});obs.observe(document.documentElement,{subtree:true,childList:true})}
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',installDomPatch,{once:true});else installDomPatch();
-window.GPProductionHotfix={gisPatched:()=>gisPatched,driveSessionKey:DRIVE_SESSION};
+function installPatches() {
+  const observer = new MutationObserver(() => {
+    patchStats(document);
+    patchPublicShare();
+    patchMemberDriveSettings();
+  });
+  observer.observe(document.documentElement, {subtree:true, childList:true});
+  patchStats(document);
+  patchPublicShare();
+  patchMemberDriveSettings();
+
+  document.addEventListener('click', e => {
+    const invite = e.target.closest?.('#gp-invite-send');
+    if (invite) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      correctedInvite();
+    }
+  }, true);
+}
+
+installPatches();
+window.GPProductionHotfix = { driveFullSessionKey: DRIVE_FULL_SESSION };
