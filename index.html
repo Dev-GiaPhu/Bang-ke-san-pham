@@ -6,14 +6,28 @@
   <meta name="theme-color" content="#132238">
   <title>GP Statistical — Design & Product Tracker</title>
   <meta name="description" content="Quản lý bảng kê sản phẩm, công việc, chia sẻ và Google Drive.">
+  <script>
+    (function(){
+      var root=document.getElementById('app');
+      window.__gpBootFail=function(e){
+        var msg=(e&&e.message)?e.message:String(e||'Không thể mở trang.');
+        if(root) root.innerHTML='<div style="min-height:100vh;display:grid;place-items:center;background:#f5f1eb;padding:32px;font-family:Arial,sans-serif;color:#132238"><div style="max-width:760px;background:#fff;border:1px solid #ddd5ca;border-radius:24px;padding:36px;box-shadow:0 20px 50px rgba(0,0,0,.08)"><div style="font-size:12px;font-weight:800;letter-spacing:3px;color:#f36b3c;margin-bottom:16px">GP STATISTICAL</div><h1 style="margin:0 0 12px;font-size:36px">Trang chưa thể mở</h1><p style="margin:0 0 18px;font-size:18px;color:#697386">Hệ thống gặp sự cố khi khởi động. Không có dữ liệu nào bị xóa.</p><details open><summary style="cursor:pointer;font-weight:700;margin-bottom:12px">Thông tin để xử lý</summary><pre style="white-space:pre-wrap;font-size:13px;line-height:1.5;margin:0;background:#f7f4ef;padding:16px;border-radius:12px">'+String(msg).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]})+'</pre></details><button onclick="location.reload()" style="margin-top:20px;border:0;border-radius:12px;padding:13px 18px;background:#132238;color:#fff;font-weight:700;cursor:pointer">Tải lại trang</button></div></div>';
+      };
+      window.addEventListener('error',function(e){ if(e&&e.error) window.__gpBootFail(e.error); });
+      window.addEventListener('unhandledrejection',function(e){ window.__gpBootFail(e&&e.reason||'Khởi động không thành công.'); });
+      document.addEventListener('DOMContentLoaded',function(){
+        root.innerHTML='<div style="min-height:100vh;display:grid;place-items:center;background:#f5f1eb;font-family:Arial,sans-serif;color:#132238"><div style="padding:30px 36px;border:1px solid #ddd5ca;background:#fff;border-radius:20px;font-weight:700">Đang mở GP Statistical…</div></div>';
+        import('./src/gp-app-stable.js?v=20260908-61').catch(window.__gpBootFail);
+      });
+    })();
+  </script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js"></script>
-  <link rel="stylesheet" href="./src/gp.css?v=20260908-60">
+  <link rel="stylesheet" href="./src/gp.css?v=20260908-61">
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="./src/gp-app-stable.js?v=20260908-60"></script>
 </body>
 </html>
