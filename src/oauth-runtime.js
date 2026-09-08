@@ -1,5 +1,5 @@
 (function(){
-  const CLIENT_ID='763681707769-62cc0421i7fuvqo27vbh94e6ql5otuk1.apps.googleusercontent.com';
+  const CLIENT_ID='763681707769-62cc042117fuvqo27vbh94e6ql5otuk1.apps.googleusercontent.com';
   let installed=false;
   function install(){
     if(installed||!window.google?.accounts?.oauth2?.initTokenClient)return false;
@@ -10,7 +10,6 @@
     };
     installed=true;
     window.__GP_OAUTH_CLIENT_ID__=CLIENT_ID;
-    console.info('[GP Statistical] OAuth client configured');
     return true;
   }
   if(!install()){
