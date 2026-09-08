@@ -1,5 +1,5 @@
 import './firebase-init.js';
-import './production-hotfix.js';
+import './production-hotfix.js?v=20260908-39';
 
 (function () {
   var root = document.getElementById('app');
@@ -17,9 +17,27 @@ import './production-hotfix.js';
     if (btn) btn.onclick = function () { location.reload(); };
   }
 
-  Promise.resolve()
-    .then(function () { return import('./production-suite.js'); })
-    .then(function () { return import('./permission-mail.js'); })
-    .then(function () { return import('./production-runtime.js'); })
+  function waitForGoogleIdentity() {
+    return new Promise(function (resolve) {
+      var started = Date.now();
+      function check() {
+        if (window.google && window.google.accounts && window.google.accounts.oauth2 && window.google.accounts.oauth2.initTokenClient) {
+          resolve();
+          return;
+        }
+        if (Date.now() - started >= 10000) {
+          resolve();
+          return;
+        }
+        setTimeout(check, 100);
+      }
+      check();
+    });
+  }
+
+  waitForGoogleIdentity()
+    .then(function () { return import('./production-suite.js?v=20260908-39'); })
+    .then(function () { return import('./permission-mail.js?v=20260908-39'); })
+    .then(function () { return import('./production-runtime.js?v=20260908-39'); })
     .catch(showFatal);
 })();
