@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function memberPath(wid, uid) {
+      return /databases/$(database)/documents/workspaces/$(wid)/members/$(uid);
+    }
+    function isMember(wid) {
+      return signedIn() && exists(memberPath(wid, request.auth.uid));
+    }
+    function isOwner(wid) {
+      return isMember(wid) && get(memberPath(wid, request.auth.uid)).data.role == 'owner';
+    }
+    function isEditor(wid) {
+      return isMember(wid) && get(memberPath(wid, request.auth.uid)).data.role in ['owner','editor'];
+    }
+
+    match /workspaces/{wid} {
+      allow read: if isMember(wid);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isOwner(wid);
+      allow delete: if isOwner(wid);
+
+      match /members/{uid} {
+        allow read: if isMember(wid);
+        allow create: if isOwner(wid) || (signedIn() && request.auth.uid == uid);
+        allow update, delete: if isOwner(wid);
+      }
+
+      match /invites/{emailKey} {
+        allow read: if isOwner(wid) || (signedIn() && request.auth.token.email != null && request.auth.token.email.lower() == resource.data.email);
+        allow create, update, delete: if isOwner(wid);
+      }
+
+      match /products/{pid} {
+        allow read: if isMember(wid);
+        allow create, update, delete: if isEditor(wid);
+      }
+
+      match /shares/{sid} {
+        allow read: if resource.data.active == true || isMember(wid);
+        allow create, update, delete: if isOwner(wid);
+
+        match /products/{pid} {
+          allow read: if get(/databases/$(database)/documents/workspaces/$(wid)/shares/$(sid)).data.active == true;
+          allow create, update, delete: if isEditor(wid);
+        }
+      }
+    }
+  }
+}
