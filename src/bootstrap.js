@@ -1,5 +1,4 @@
 import './firebase-init.js';
-import './production-hotfix.js?v=20260908-39';
 
 (function () {
   var root = document.getElementById('app');
@@ -36,8 +35,10 @@ import './production-hotfix.js?v=20260908-39';
   }
 
   waitForGoogleIdentity()
-    .then(function () { return import('./production-suite.js?v=20260908-39'); })
-    .then(function () { return import('./permission-mail.js?v=20260908-39'); })
-    .then(function () { return import('./production-runtime.js?v=20260908-39'); })
+    .then(function () { return import('./drive-stabilizer.js?v=20260908-42'); })
+    .then(function () { return import('./production-suite.js?v=20260908-42'); })
+    .then(function () { return import('./public-share-stabilizer.js?v=20260908-42'); })
+    .then(function () { return import('./permission-mail.js?v=20260908-42'); })
+    .then(function () { return import('./production-runtime.js?v=20260908-42'); })
     .catch(showFatal);
 })();
