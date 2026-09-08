@@ -1,0 +1,41 @@
+name: Repair production JavaScript
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.event.head_commit.message != 'Repair production JavaScript [skip ci]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair malformed input handler
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/production-suite.js')
+          s = p.read_text(encoding='utf-8')
+          old = "w.querySelectorAll('[data-af]').forEach(e=>e.oninput=()=>state.scanRows[Number(e.dataset.i)][e.dataset.af]=e.value;"
+          new = "w.querySelectorAll('[data-af]').forEach(e=>{e.oninput=()=>{state.scanRows[Number(e.dataset.i)][e.dataset.af]=e.value};});"
+          if old in s:
+              p.write_text(s.replace(old, new), encoding='utf-8')
+          PY
+      - name: Validate repaired JavaScript
+        run: |
+          node --check src/production-suite.js
+          node --check src/bootstrap.js
+      - name: Commit repair
+        run: |
+          if git diff --quiet; then
+            echo 'No repair needed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/production-suite.js
+          git commit -m 'Repair production JavaScript [skip ci]'
+          git push
