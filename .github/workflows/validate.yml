@@ -11,23 +11,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check JavaScript syntax
-        run: node --check src/gp-app-final.js
+        run: node --check src/gp-app-stable.js
       - name: Check required entrypoints
         run: |
           set -e
           test -s index.html
-          test -s src/gp-app-final.js
+          test -s src/gp-app-stable.js
           test -s src/gp.css
           test -s firestore.rules
-          grep -q 'src/gp-app-final.js' index.html
+          grep -q 'src/gp-app-stable.js' index.html
           grep -q 'src/gp.css' index.html
           ! grep -q 'bootstrap.js' index.html
           ! grep -q 'production-suite.js' index.html
+          ! grep -q 'production-hotfix.js' index.html
       - name: Check Firebase configuration
         run: |
           set -e
-          grep -q 'gp-statistical' src/gp-app-final.js
-          grep -q 'AIza' src/gp-app-final.js
+          grep -q 'gp-statistical' src/gp-app-stable.js
+          grep -q 'gp-statistical.firebaseapp.com' src/gp-app-stable.js
+      - name: Check Firestore rules
+        run: |
+          set -e
+          grep -q "rules_version = '2'" firestore.rules
+          grep -q 'workspaces' firestore.rules
+          grep -q 'shares' firestore.rules
+          grep -q 'invites' firestore.rules
       - name: Check for private key material
         run: |
           ! grep -R -nE 'BEGIN (RSA|OPENSSH) PRIVATE KEY|private_key' --include='*.js' --include='*.html' --include='*.json' .
