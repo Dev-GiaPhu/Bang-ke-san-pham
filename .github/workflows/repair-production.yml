@@ -19,13 +19,18 @@ jobs:
           from pathlib import Path
           p = Path('src/production-suite.js')
           s = p.read_text(encoding='utf-8')
-          old = "w.querySelectorAll('[data-af]').forEach(e=>e.oninput=()=>state.scanRows[Number(e.dataset.i)][e.dataset.af]=e.value;"
-          new = "w.querySelectorAll('[data-af]').forEach(e=>{e.oninput=()=>{state.scanRows[Number(e.dataset.i)][e.dataset.af]=e.value};});"
-          if old in s:
-              p.write_text(s.replace(old, new), encoding='utf-8')
+          marker = "w.querySelectorAll('[data-af]').forEach(e=>"
+          if marker in s:
+              start = s.index(marker)
+              end = s.find(";w.querySelector('#af-add').disabled", start)
+              if end != -1:
+                  replacement = "w.querySelectorAll('[data-af]').forEach(e=>{e.oninput=function(){state.scanRows[Number(e.dataset.i)][e.dataset.af]=e.value};})"
+                  s = s[:start] + replacement + s[end:]
+                  p.write_text(s, encoding='utf-8')
           PY
       - name: Validate repaired JavaScript
         run: |
+          set -e
           node --check src/production-suite.js
           node --check src/bootstrap.js
       - name: Commit repair
