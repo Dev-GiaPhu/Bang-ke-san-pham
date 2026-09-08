@@ -1,4 +1,5 @@
 import './firebase-init.js';
+import './production-hotfix.js';
 
 (function () {
   var root = document.getElementById('app');
