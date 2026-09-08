@@ -1,7 +1,9 @@
 /* Final UI corrections */
+.gp-stats .stat:first-child > div{display:grid!important;gap:9px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.gp-stats .stat:first-child > div > small{display:flex!important;align-items:center;justify-content:space-between;gap:16px;white-space:normal!important;line-height:1.4;margin:0}
+.gp-stats .stat:first-child > div > small::after{content:none}
 .stat.gp-product-stat > .gp-stat-breakdown{display:grid!important;gap:9px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .stat.gp-product-stat > .gp-stat-breakdown > small{display:flex!important;align-items:center;justify-content:space-between;gap:16px;white-space:normal!important;line-height:1.4;margin:0}
-.stat.gp-product-stat > .gp-stat-breakdown > small::after{content:none}
 .other-work[hidden]{display:none!important}
 .modal.large{width:min(1100px,94vw)}
 .modal.large .form-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
