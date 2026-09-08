@@ -34,9 +34,11 @@ function patchGoogleTokenClient(){
             fetch('https://www.googleapis.com/drive/v3/about?fields=user',{headers:{Authorization:`Bearer ${saved}`}})
               .then(r=>{if(!r.ok)throw Error('expired');return r.json()})
               .then(()=>cfg.callback({access_token:saved,expires_in:1800,scope:cfg.scope}))
-              .catch(()=>{try{sessionStorage.removeItem(DRIVE_SESSION)}catch{};origRequest(params)});
+              .catch(()=>{try{sessionStorage.removeItem(DRIVE_SESSION)}catch{};cfg.callback({error:'login_required',error_description:'Kết nối Google Drive cần được kết nối lại.'})});
             return;
           }
+          cfg.callback({error:'login_required',error_description:'Kết nối Google Drive chưa được khôi phục tự động.'});
+          return;
         }
         return origRequest(params);
       };
