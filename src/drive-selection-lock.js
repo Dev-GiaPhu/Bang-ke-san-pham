@@ -15,10 +15,32 @@
   const exactFolder=(t,r)=>{const want=norm(r.sourceFolderPath||'');if(want){const hits=[...t.folders.values()].filter(f=>norm(fullPath(t.root.name,f.path))===want);if(hits.length===1)return hits[0]}return r.driveVariantFolderId?t.folders.get(r.driveVariantFolderId)||null:null};
   const directAssets=(t,id)=>{const f=t.folders.get(id);if(!f)return[];const p=f.path.join('\0');return t.files.filter(x=>x.folderPath.join('\0')===p).map(x=>({id:x.id,name:x.name,mimeType:x.mimeType||'',modifiedTime:x.modifiedTime||'',version:x.version||'',size:x.size||'',webViewLink:x.webViewLink||`https://drive.google.com/open?id=${x.id}`,thumbnailLink:x.thumbnailLink||'',folderPath:x.folderPath.join(' / '),role:/final/i.test(x.name)?'final':/mockup/i.test(x.name)?'mockup':/source/i.test(x.name)?'source':'asset'}))};
   const previews=a=>a.filter(x=>IMG.test(x.name)).sort((x,y)=>(x.role==='final'?-1:0)-(y.role==='final'?-1:0)||String(y.modifiedTime).localeCompare(String(x.modifiedTime))).slice(0,2);
+
+  /* Critical: disable main.js's legacy autoSync writer. That writer can fall
+     back to product + volume + size and swap two different Drive folders. */
+  const nativeSetTimeout=window.setTimeout;
+  window.setTimeout=function(fn,delay,...args){if(typeof fn==='function'){let src='';try{src=Function.prototype.toString.call(fn)}catch{}if(fn.name==='autoSync'||/\bfunction\s+autoSync\b/.test(src))return 0}return nativeSetTimeout(fn,delay,...args)};
+
   let ran=false,running=false;
-  async function repairOnce(){if(ran||running||!window.__gpDriveToken)return;running=true;try{const rs=read(),roots=[...new Set(rs.map(r=>r.driveRootFolderId||idFromUrl(r.driveRootFolderUrl||r.driveFolderUrl)).filter(Boolean))];let changed=false;for(const rootId of roots){let t;try{t=await tree(window.__gpDriveToken,rootId)}catch{continue}for(const r of rs.filter(x=>(x.driveRootFolderId||idFromUrl(x.driveRootFolderUrl||x.driveFolderUrl))===rootId)){const f=exactFolder(t,r);if(!f)continue;const a=directAssets(t,f.id),p=previews(a),np=fullPath(t.root.name,f.path),nextId=f.id;if(r.driveVariantFolderId!==nextId||r.sourceFolderPath!==np||JSON.stringify(r.assets||[])!==JSON.stringify(a)){Object.assign(r,{driveRootFolderId:rootId,driveRootFolderUrl:r.driveRootFolderUrl||t.root.webViewLink||folderUrl(rootId),driveVariantFolderId:nextId,driveFolderUrl:folderUrl(nextId),sourceFolderPath:np,assets:a,previewAssets:p,previewFileId:p[0]?.id||'',previewFileName:p[0]?.name||'',drivePresent:true,lastDriveSync:new Date().toISOString(),driveIdentityLocked:true});changed=true}}}if(changed){window.__gpManualDriveWrite=true;localStorage.setItem(STORE,JSON.stringify(rs));window.__gpManualDriveWrite=false}ran=true}finally{running=false}}
+  async function repairOnce(){
+    if(ran||running||!window.__gpDriveToken)return;running=true;
+    try{
+      const rs=read(),roots=[...new Set(rs.map(r=>r.driveRootFolderId||idFromUrl(r.driveRootFolderUrl||r.driveFolderUrl)).filter(Boolean))];let changed=false;
+      for(const rootId of roots){let t;try{t=await tree(window.__gpDriveToken,rootId)}catch{continue}
+        for(const r of rs.filter(x=>(x.driveRootFolderId||idFromUrl(x.driveRootFolderUrl||x.driveFolderUrl))===rootId)){
+          const f=exactFolder(t,r);if(!f)continue;const a=directAssets(t,f.id),p=previews(a),np=fullPath(t.root.name,f.path),nextId=f.id;
+          if(r.driveVariantFolderId!==nextId||r.sourceFolderPath!==np||JSON.stringify(r.assets||[])!==JSON.stringify(a)){
+            Object.assign(r,{driveRootFolderId:rootId,driveRootFolderUrl:r.driveRootFolderUrl||t.root.webViewLink||folderUrl(rootId),driveVariantFolderId:nextId,driveFolderUrl:folderUrl(nextId),sourceFolderPath:np,assets:a,previewAssets:p,previewFileId:p[0]?.id||'',previewFileName:p[0]?.name||'',drivePresent:true,lastDriveSync:new Date().toISOString(),driveIdentityLocked:true});changed=true;
+          }
+        }
+      }
+      if(changed){window.__gpManualDriveWrite=true;localStorage.setItem(STORE,JSON.stringify(rs));window.__gpManualDriveWrite=false}ran=true;
+    }finally{running=false}
+  }
   const nativeSet=Storage.prototype.setItem;
-  Storage.prototype.setItem=function(k,v){if(k!==STORE||window.__gpManualDriveWrite)return nativeSet.call(this,k,v);try{const old=read(),next=JSON.parse(v),byId=new Map(old.map(r=>[r.id,r]));const merged=next.map(r=>{const p=byId.get(r.id);if(!p?.driveIdentityLocked)return r;if(r.driveVariantFolderId!==p.driveVariantFolderId)return {...r,driveRootFolderId:p.driveRootFolderId,driveRootFolderUrl:p.driveRootFolderUrl,driveVariantFolderId:p.driveVariantFolderId,driveFolderUrl:p.driveFolderUrl,sourceFolderPath:p.sourceFolderPath,assets:p.assets,previewAssets:p.previewAssets,previewFileId:p.previewFileId,previewFileName:p.previewFileName,drivePresent:p.drivePresent,driveIdentityLocked:true};return r});return nativeSet.call(this,k,JSON.stringify(merged))}catch{return nativeSet.call(this,k,v)}};
-  window.addEventListener('gp-drive-connected',()=>setTimeout(repairOnce,450));
-  window.addEventListener('load',()=>setTimeout(repairOnce,900));
+  Storage.prototype.setItem=function(k,v){
+    if(k!==STORE||window.__gpManualDriveWrite)return nativeSet.call(this,k,v);
+    try{const old=read(),next=JSON.parse(v),byId=new Map(old.map(r=>[r.id,r]));const merged=next.map(r=>{const p=byId.get(r.id);if(!p?.driveIdentityLocked)return r;if(r.driveVariantFolderId===p.driveVariantFolderId&&r.sourceFolderPath===p.sourceFolderPath)return r;return {...r,driveRootFolderId:p.driveRootFolderId,driveRootFolderUrl:p.driveRootFolderUrl,driveVariantFolderId:p.driveVariantFolderId,driveFolderUrl:p.driveFolderUrl,sourceFolderPath:p.sourceFolderPath,assets:p.assets,previewAssets:p.previewAssets,previewFileId:p.previewFileId,previewFileName:p.previewFileName,drivePresent:p.drivePresent,driveIdentityLocked:true}});return nativeSet.call(this,k,JSON.stringify(merged))}catch{return nativeSet.call(this,k,v)}};
+  window.addEventListener('gp-drive-connected',()=>nativeSetTimeout(repairOnce,450));
+  window.addEventListener('load',()=>nativeSetTimeout(repairOnce,1200));
 })();
