@@ -1,0 +1,11 @@
+/* Final UI corrections */
+.stat-products .stat-breakdown{display:grid;gap:9px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.stat-products .stat-breakdown-row{display:flex!important;align-items:center;justify-content:space-between;gap:16px;white-space:normal!important}
+.stat-products .stat-breakdown-row span{display:block;min-width:0}
+.stat-products .stat-breakdown-row b{flex:0 0 auto}
+.other-work[hidden]{display:none!important}
+.modal.large{width:min(1100px,94vw)}
+.modal.large .form-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+[data-share-row]{transition:opacity .15s ease,transform .15s ease}
+@media(max-width:900px){.modal.large .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.modal.large .form-grid{grid-template-columns:1fr}}
