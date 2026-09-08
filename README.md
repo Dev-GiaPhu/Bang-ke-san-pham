@@ -2,31 +2,22 @@
 
 Ứng dụng web quản lý bảng kê sản phẩm và công việc thiết kế.
 
-- Google Authentication + Cloud Firestore cho dữ liệu và cộng tác realtime.
-- Google Drive chỉ là nguồn đọc file; metadata lưu Drive Folder ID/URL.
-- Viewer / Editor / Owner cho workspace.
-- Share link ổn định, dữ liệu cập nhật theo Firestore.
-- Xuất Excel và PDF A4.
-- Không lưu file thiết kế vào Firebase Storage.
+Firebase Authentication + Cloud Firestore lưu dữ liệu và cộng tác realtime. Google Drive chỉ là nguồn đọc file; hệ thống lưu metadata và Drive Folder ID/URL, không quản lý file trên Drive.
 
 ## Firebase
 
 Project: `gp-statistical`.
 
-### Firestore Rules
+Bật Google trong Firebase Console → Authentication → Phương thức kết nối.
 
-File `firestore.rules` chứa rules production cho owner/editor/viewer và public share đang hoạt động.
+Tạo Cloud Firestore ở chế độ sản xuất. File `firestore.rules` trong repo là rules production cho owner/editor/viewer và public share.
 
-Sau khi tạo Firestore, mở Firebase Console → Firestore Database → Rules và dán nội dung `firestore.rules`, rồi bấm Publish.
-
-### Google Authentication
-
-Firebase Console → Authentication → Phương thức kết nối → Google → Bật.
+Sau khi tạo Firestore, vào Firebase Console → Firestore Database → Rules, dán nội dung file `firestore.rules` và bấm Publish.
 
 ## Google Drive OAuth
 
-Trong Google Cloud project của app, bật Google Drive API và cấu hình OAuth Client ID dạng Web application. Client ID được nhập trong GP Statistical → Cài đặt. Scope app dùng để đọc Drive là `drive.readonly`.
+Bật Google Drive API và tạo OAuth Client ID dạng Web application. Nhập Client ID trong GP Statistical → Cài đặt. Scope Drive chỉ đọc `drive.readonly`.
 
-## Hosting
+## GitHub Pages
 
-Repo chạy trực tiếp trên GitHub Pages, không cần build server.
+Ứng dụng chạy trực tiếp từ GitHub Pages, không cần build server.
