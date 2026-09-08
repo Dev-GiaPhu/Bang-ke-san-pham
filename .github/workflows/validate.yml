@@ -13,19 +13,23 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           set -e
-          for f in src/firebase-init.js src/production-hotfix.js src/production-suite.js src/permission-mail.js src/production-runtime.js src/share-guard.js src/bootstrap.js; do
-            node --check "$f"
-          done
-      - name: Check required entrypoints
+          node --check src/gp-app-final.js
+      - name: Check HTML and required entrypoints
         run: |
+          set -e
           test -s index.html
           test -s firestore.rules
-          grep -q "bootstrap.js" index.html
-          grep -q "production-hotfix.js" src/bootstrap.js
-          grep -q "production-suite.js" src/bootstrap.js
-          grep -q "firebase-init.js" src/bootstrap.js
+          grep -q 'src/gp-app-final.js' index.html
+          grep -q 'src/gp.css' index.html
+          ! grep -q 'bootstrap.js' index.html
+          ! grep -q 'production-suite.js' index.html
       - name: Check Firebase configuration consistency
         run: |
-          grep -q "gp-statistical" src/firebase-init.js
-          grep -q "gp-statistical" src/production-suite.js
-          grep -q "gp-statistical" src/production-hotfix.js
+          set -e
+          grep -q 'gp-statistical' src/gp-app-final.js
+          grep -q 'gp-statistical.firebaseapp.com' src/gp-app-final.js
+          grep -q 'gp-statistical' firestore.rules
+      - name: Check forbidden frontend secrets
+        run: |
+          set -e
+          ! grep -R -nE 'BEGIN (RSA|OPENSSH) PRIVATE KEY|private_key|client_secret' --include='*.js' --include='*.html' --include='*.json' . || true
