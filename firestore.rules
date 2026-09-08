@@ -8,15 +8,23 @@ service cloud.firestore {
     function isMember(wid) { return signedIn() && exists(memberPath(wid, request.auth.uid)); }
     function isOwner(wid) { return isMember(wid) && get(memberPath(wid, request.auth.uid)).data.role == 'owner'; }
     function isEditor(wid) { return isMember(wid) && get(memberPath(wid, request.auth.uid)).data.role in ['owner','editor']; }
-    function isInitialOwner(wid, uid) { return signedIn() && request.auth.uid == uid && exists(workspacePath(wid)) && get(workspacePath(wid)).data.ownerUid == uid; }
+    function isInitialOwner(wid, uid) {
+      return signedIn() && request.auth.uid == uid &&
+        exists(workspacePath(wid)) &&
+        get(workspacePath(wid)).data.ownerUid == uid;
+    }
 
     match /workspaces/{wid} {
-      allow read: if isMember(wid) || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      // A signed-in user may read workspace metadata so the app can determine
+      // whether this is the first owner bootstrap. Product data remains gated by membership.
+      allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
       allow update, delete: if isOwner(wid);
 
       match /members/{uid} {
-        allow read: if isMember(wid);
+        // Members can read the list; a user may also inspect their own member doc
+        // so a missing membership can be detected without a permission error.
+        allow read: if isMember(wid) || (signedIn() && uid == request.auth.uid);
         allow create: if isOwner(wid) || isInitialOwner(wid, uid) || (
           signedIn() && request.auth.uid == uid &&
           exists(invitePath(wid, request.auth.token.email)) &&
