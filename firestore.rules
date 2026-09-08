@@ -2,25 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function memberPath(wid, uid) { return /databases/$(database)/documents/workspaces/$(wid)/members/$(uid); }
-    function invitePath(wid, email) { return /databases/$(database)/documents/workspaces/$(wid)/invites/$(email); }
-    function workspacePath(wid) { return /databases/$(database)/documents/workspaces/$(wid); }
-    function isMember(wid) { return signedIn() && exists(memberPath(wid, request.auth.uid)); }
-    function isOwner(wid) { return isMember(wid) && get(memberPath(wid, request.auth.uid)).data.role == 'owner'; }
-    function canInviteMember(wid) {
-      return isMember(wid) && (
-        isOwner(wid) ||
-        get(memberPath(wid, request.auth.uid)).data.canInvite == true
-      );
-    }
-    function isEditor(wid) { return isMember(wid) && get(memberPath(wid, request.auth.uid)).data.role in ['owner','editor']; }
-    function isInitialOwner(wid, uid) {
-      return signedIn() && request.auth.uid == uid && exists(workspacePath(wid)) && get(workspacePath(wid)).data.ownerUid == uid;
-    }
-    function hasSelfInvite(wid) {
+    function workspace(wid) { return /databases/$(database)/documents/workspaces/$(wid); }
+    function member(wid, uid) { return /databases/$(database)/documents/workspaces/$(wid)/members/$(uid); }
+    function invite(wid, email) { return /databases/$(database)/documents/workspaces/$(wid)/invites/$(email); }
+    function share(wid, sid) { return /databases/$(database)/documents/workspaces/$(wid)/shares/$(sid); }
+    function isMember(wid) { return signedIn() && exists(member(wid, request.auth.uid)); }
+    function isOwner(wid) { return isMember(wid) && get(member(wid, request.auth.uid)).data.role == 'owner'; }
+    function isEditor(wid) { return isMember(wid) && get(member(wid, request.auth.uid)).data.role in ['owner','editor']; }
+    function canInvite(wid) { return isOwner(wid) || (isMember(wid) && get(member(wid, request.auth.uid)).data.canInvite == true); }
+    function selfInvited(wid) {
       return signedIn() &&
-        exists(invitePath(wid, request.auth.token.email)) &&
-        get(invitePath(wid, request.auth.token.email)).data.email == request.auth.token.email;
+        exists(invite(wid, request.auth.token.email)) &&
+        get(invite(wid, request.auth.token.email)).data.email == request.auth.token.email;
     }
 
     match /workspaces/{wid} {
@@ -30,20 +23,21 @@ service cloud.firestore {
 
       match /members/{uid} {
         allow read: if isMember(wid) || (signedIn() && uid == request.auth.uid);
-        allow create: if isOwner(wid) || isInitialOwner(wid, uid) || (
-          signedIn() && uid == request.auth.uid &&
-          hasSelfInvite(wid) &&
-          request.resource.data.email == request.auth.token.email &&
-          request.resource.data.role == get(invitePath(wid, request.auth.token.email)).data.role &&
-          request.resource.data.canInvite == get(invitePath(wid, request.auth.token.email)).data.canInvite &&
-          request.resource.data.driveAccess == get(invitePath(wid, request.auth.token.email)).data.driveAccess
-        );
+        allow create: if (isOwner(wid)) ||
+          (signedIn() && uid == request.auth.uid &&
+            get(workspace(wid)).data.ownerUid == request.auth.uid &&
+            request.resource.data.role == 'owner') ||
+          (selfInvited(wid) && uid == request.auth.uid &&
+            request.resource.data.email == request.auth.token.email &&
+            request.resource.data.role == get(invite(wid, request.auth.token.email)).data.role &&
+            request.resource.data.canInvite == get(invite(wid, request.auth.token.email)).data.canInvite &&
+            request.resource.data.driveAccess == get(invite(wid, request.auth.token.email)).data.driveAccess);
         allow update, delete: if isOwner(wid);
       }
 
-      match /invites/{emailKey} {
-        allow read: if isOwner(wid) || (signedIn() && resource.data.email == request.auth.token.email);
-        allow create, update, delete: if canInviteMember(wid);
+      match /invites/{email} {
+        allow read: if isOwner(wid) || (signedIn() && request.auth.token.email == email);
+        allow create, update, delete: if canInvite(wid);
       }
 
       match /products/{pid} {
@@ -56,15 +50,14 @@ service cloud.firestore {
         allow create, update, delete: if isOwner(wid);
 
         match /products/{pid} {
-          allow read: if get(/databases/$(database)/documents/workspaces/$(wid)/shares/$(sid)).data.active == true;
+          allow read: if get(share(wid, sid)).data.active == true || isMember(wid);
           allow create, update, delete: if isEditor(wid);
         }
       }
     }
 
     match /mail/{mid} {
-      allow create: if signedIn() && canInviteMember(request.resource.data.workspaceId);
-      allow read, update, delete: if false;
+      allow read, write: if false;
     }
   }
 }
