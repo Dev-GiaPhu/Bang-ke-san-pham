@@ -1,0 +1,1 @@
+{"name":"gp-sheets-functions","private":true,"type":"module","engines":{"node":"20"},"dependencies":{"@google-cloud/firestore":"^7.11.0","firebase-admin":"^13.4.0","firebase-functions":"^6.4.0","nodemailer":"^7.0.6"}}
