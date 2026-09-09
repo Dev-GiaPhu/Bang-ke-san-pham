@@ -1,0 +1,1 @@
+The Donate page must display assets/donate-qr.jpg, the original QR image supplied by the owner. Do not regenerate, redraw, vectorize, crop, or replace the QR payload.
