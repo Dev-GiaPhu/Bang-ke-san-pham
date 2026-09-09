@@ -1,0 +1,1 @@
+Original donation QR asset is stored as assets/donate-qr.jpg and is used directly without regeneration.
