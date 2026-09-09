@@ -3,10 +3,10 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function owner(id) { return signedIn() && get(/databases/$(database)/documents/sheets/$(id)).data.ownerId == request.auth.uid; }
-    function member(id) { return signedIn() && exists(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.uid)); }
+    function member(id) { return signedIn() && exists(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.token.email)); }
     match /users/{uid} { allow read,write: if signedIn() && request.auth.uid == uid; }
-    match /sheets/{id} { allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid; allow read,update,delete: if owner(id) || member(id); }
-    match /sheetPermissions/{id} { allow read: if signedIn() && (resource.data.userId == request.auth.uid || owner(resource.data.sheetId)); allow create,update,delete: if signedIn() && owner(request.resource.data.sheetId); }
+    match /sheets/{id} { allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid; allow read: if owner(id) || member(id); allow update: if owner(id) || (member(id) && get(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.token.email)).data.role == 'editor'); allow delete: if owner(id); }
+    match /sheetPermissions/{id} { allow read: if signedIn() && (resource.data.email == request.auth.token.email || owner(resource.data.sheetId)); allow create: if signedIn() && owner(request.resource.data.sheetId); allow update,delete: if signedIn() && owner(resource.data.sheetId); }
     match /notifications/{id} { allow read,update: if signedIn() && resource.data.userId == request.auth.uid; allow create: if signedIn(); }
   }
 }
