@@ -2,8 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function owner(id) { return signedIn() && get(/databases/$(database)/documents/sheets/$(id)).data.ownerId == request.auth.uid; }
-    function member(id) { return signedIn() && exists(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.uid)); }
+    function isOwnerSheet(id) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/sheets/$(id))
+        && get(/databases/$(database)/documents/sheets/$(id)).data.ownerId == request.auth.uid;
+    }
+    function isSheetMember(id) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.uid));
+    }
 
     match /users/{uid} {
       allow read, write: if signedIn() && request.auth.uid == uid;
@@ -15,21 +22,35 @@ service cloud.firestore {
     }
 
     match /sheets/{id} {
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow read: if owner(id) || member(id);
-      allow update: if owner(id) || (member(id) && get(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.uid)).data.role == 'editor');
-      allow delete: if owner(id);
+      // Query-friendly owner read rule: supports
+      // where('ownerId', '==', request.auth.uid)
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid
+                  || isSheetMember(id);
+
+      allow create: if signedIn()
+                    && request.resource.data.ownerId == request.auth.uid;
+
+      allow update: if signedIn()
+                    && (resource.data.ownerId == request.auth.uid
+                        || (isSheetMember(id)
+                            && get(/databases/$(database)/documents/sheetPermissions/$(id + '_' + request.auth.uid)).data.role == 'editor'));
+
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
 
     match /sheetPermissions/{id} {
-      allow read: if signedIn() && (resource.data.userId == request.auth.uid || owner(resource.data.sheetId));
-      allow create: if signedIn() && owner(request.resource.data.sheetId);
-      allow update, delete: if signedIn() && owner(resource.data.sheetId);
+      allow read: if signedIn()
+                  && (resource.data.userId == request.auth.uid
+                      || isOwnerSheet(resource.data.sheetId));
+      allow create: if signedIn()
+                    && isOwnerSheet(request.resource.data.sheetId);
+      allow update, delete: if signedIn()
+                            && isOwnerSheet(resource.data.sheetId);
     }
 
     match /notifications/{id} {
       allow read, update: if signedIn() && resource.data.userId == request.auth.uid;
-      allow create: if signedIn() && owner(request.resource.data.sheetId);
+      allow create: if signedIn() && isOwnerSheet(request.resource.data.sheetId);
     }
   }
 }
