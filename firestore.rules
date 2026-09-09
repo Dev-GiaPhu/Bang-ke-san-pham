@@ -5,6 +5,7 @@ service cloud.firestore {
     function workspace(wid) { return /databases/$(database)/documents/workspaces/$(wid); }
     function member(wid, uid) { return /databases/$(database)/documents/workspaces/$(wid)/members/$(uid); }
     function invite(wid, email) { return /databases/$(database)/documents/workspaces/$(wid)/invites/$(email); }
+    function revoked(wid, email) { return /databases/$(database)/documents/workspaces/$(wid)/revoked/$(email); }
     function share(wid, sid) { return /databases/$(database)/documents/workspaces/$(wid)/shares/$(sid); }
     function isMember(wid) { return signedIn() && exists(member(wid, request.auth.uid)); }
     function isOwner(wid) { return isMember(wid) && get(member(wid, request.auth.uid)).data.role == 'owner'; }
@@ -13,7 +14,8 @@ service cloud.firestore {
     function selfInvited(wid) {
       return signedIn() &&
         exists(invite(wid, request.auth.token.email)) &&
-        get(invite(wid, request.auth.token.email)).data.email == request.auth.token.email;
+        get(invite(wid, request.auth.token.email)).data.email == request.auth.token.email &&
+        !exists(revoked(wid, request.auth.token.email));
     }
 
     match /workspaces/{wid} {
@@ -38,6 +40,10 @@ service cloud.firestore {
       match /invites/{email} {
         allow read: if isOwner(wid) || (signedIn() && request.auth.token.email == email);
         allow create, update, delete: if canInvite(wid);
+      }
+
+      match /revoked/{email} {
+        allow read, write, delete: if isOwner(wid);
       }
 
       match /products/{pid} {
