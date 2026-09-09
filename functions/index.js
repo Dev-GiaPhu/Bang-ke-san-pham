@@ -4,35 +4,37 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 
 admin.initializeApp();
-setGlobalOptions({ region: 'asia-southeast1', maxInstances: 10 });
+setGlobalOptions({ region: 'asia-southeast1', maxInstances: 10, timeoutSeconds: 60 });
 const db = admin.firestore();
-const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
-const otp = () => String(crypto.randomInt(100000, 1000000));
+
 const cors = (res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
 };
 const body = (req) => (req.body && typeof req.body === 'object' ? req.body : {});
+const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
+const makeOtp = () => String(crypto.randomInt(100000, 1000000));
 
-async function verifyGoogleToken(token) {
-  if (!token) throw new Error('Thiếu phiên Google.');
+async function verifyBearer(req) {
+  const token = String(req.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!token) throw Object.assign(new Error('Phiên đăng nhập không hợp lệ.'), { status: 401 });
   return admin.auth().verifyIdToken(token);
 }
 
-async function sendEmail(to, subject, html) {
+async function sendResend(to, otp) {
   const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('RESEND_API_KEY chưa được cấu hình trong backend.');
   const from = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-  if (!key) throw new Error('Chưa cấu hình RESEND_API_KEY.');
-  const r = await fetch('https://api.resend.com/emails', {
+  const html = `<!doctype html><html lang="vi"><body style="margin:0;background:#f4f6f9;padding:32px;font-family:Arial,sans-serif;color:#152033"><div style="max-width:560px;margin:auto;background:#fff;border:1px solid #dde3ec;border-radius:20px;padding:32px"><div style="font-size:11px;font-weight:900;letter-spacing:.18em;color:#2563eb">GP STATISTICAL</div><h1 style="font-size:28px;margin:10px 0 18px">Mã xác thực email</h1><p>Nhập mã sau vào GP Statistical:</p><div style="font-size:38px;font-weight:900;letter-spacing:10px;padding:18px 0">${otp}</div><p style="color:#667085">Mã có hiệu lực trong 10 phút và chỉ dùng một lần.</p></div></body></html>`;
+  const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: `GP Statistical <${from}>`, to: [to], subject, html })
+    body: JSON.stringify({ from: `GP Statistical <${from}>`, to: [to], subject: 'Mã xác thực GP Statistical', html })
   });
-  if (!r.ok) {
-    const text = await r.text();
-    console.error('Resend error', r.status, text);
-    throw new Error('Dịch vụ email không gửi được thư.');
+  if (!response.ok) {
+    console.error('Resend:', response.status, await response.text());
+    throw new Error('Dịch vụ email không gửi được mã.');
   }
 }
 
@@ -41,30 +43,21 @@ exports.sendVerification = onRequest(async (req, res) => {
   if (req.method === 'OPTIONS') return res.status(204).send('');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
   try {
-    const { token, email } = body(req);
-    const decoded = await verifyGoogleToken(token);
-    const requestedEmail = String(email || '').trim().toLowerCase();
-    const verifiedEmail = String(decoded.email || '').trim().toLowerCase();
-    if (!decoded.email_verified || requestedEmail !== verifiedEmail) return res.status(403).json({ error: 'Email Google chưa được xác thực.' });
-    if (!/^\S+@gmail\.com$/i.test(verifiedEmail)) return res.status(400).json({ error: 'Chỉ chấp nhận Gmail.' });
-    const profile = await db.collection('users').doc(decoded.uid).get();
-    if (profile.exists && profile.data()?.emailVerified) return res.status(409).json({ error: 'Tài khoản đã được xác thực.' });
-    const value = otp();
-    const id = hash(decoded.uid + ':' + verifiedEmail);
-    await db.collection('verificationSessions').doc(id).set({
-      uid: decoded.uid,
-      email: verifiedEmail,
-      codeHash: hash(value),
-      attempts: 0,
-      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-    await sendEmail(verifiedEmail, 'Mã xác thực GP Statistical', `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto"><h2>GP Statistical</h2><p>Mã xác thực email của bạn:</p><div style="font-size:34px;font-weight:800;letter-spacing:9px;padding:18px 0">${value}</div><p>Mã có hiệu lực trong 10 phút và chỉ dùng một lần.</p></div>`);
+    const decoded = await verifyBearer(req);
+    const email = String(body(req).email || '').trim().toLowerCase();
+    if (email !== String(decoded.email || '').toLowerCase() || !decoded.email_verified) return res.status(403).json({ error: 'Gmail Google chưa được xác thực hoặc không khớp phiên đăng nhập.' });
+    if (!email.endsWith('@gmail.com')) return res.status(400).json({ error: 'Chỉ chấp nhận Gmail.' });
+    const ref = db.collection('verificationSessions').doc(decoded.uid);
+    const previous = await ref.get();
+    if (previous.exists) {
+      const last = previous.data()?.sentAt?.toMillis?.() || 0;
+      if (Date.now() - last < 60_000) return res.status(429).json({ error: 'Vui lòng chờ 60 giây trước khi gửi lại mã.' });
+    }
+    const otp = makeOtp();
+    await ref.set({ uid: decoded.uid, email, codeHash: hash(`${decoded.uid}:${otp}`), attempts: 0, expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 60 * 1000), sentAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    await sendResend(email, otp);
     res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message || 'Không gửi được mã xác thực.' });
-  }
+  } catch (e) { console.error(e); res.status(e.status || 500).json({ error: e.message || 'Không gửi được mã xác thực.' }); }
 });
 
 exports.verifyGoogle = onRequest(async (req, res) => {
@@ -72,72 +65,54 @@ exports.verifyGoogle = onRequest(async (req, res) => {
   if (req.method === 'OPTIONS') return res.status(204).send('');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
   try {
-    const { token, email, code } = body(req);
-    const decoded = await verifyGoogleToken(token);
-    const em = String(email || '').trim().toLowerCase();
-    if (decoded.email !== em || !decoded.email_verified) return res.status(403).json({ error: 'Phiên Google không khớp email.' });
-    const ref = db.collection('verificationSessions').doc(hash(decoded.uid + ':' + em));
+    const decoded = await verifyBearer(req);
+    const email = String(body(req).email || '').trim().toLowerCase();
+    const code = String(body(req).code || '').trim();
+    if (email !== String(decoded.email || '').toLowerCase()) return res.status(403).json({ error: 'Email không khớp tài khoản Google.' });
+    if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Mã xác thực phải gồm đúng 6 số.' });
+    const ref = db.collection('verificationSessions').doc(decoded.uid);
     const snap = await ref.get();
-    if (!snap.exists) return res.status(400).json({ error: 'Không tìm thấy mã xác thực hoặc mã đã hết hạn.' });
+    if (!snap.exists) return res.status(400).json({ error: 'Không tìm thấy phiên xác thực. Hãy gửi lại mã.' });
     const v = snap.data();
     if (v.expiresAt.toMillis() < Date.now()) return res.status(400).json({ error: 'Mã đã hết hạn. Hãy gửi mã mới.' });
-    if ((v.attempts || 0) >= 5) return res.status(429).json({ error: 'Đã vượt quá số lần thử.' });
-    if (hash(String(code || '')) !== v.codeHash) {
+    if ((v.attempts || 0) >= 5) return res.status(429).json({ error: 'Bạn đã nhập sai quá số lần cho phép.' });
+    if (hash(`${decoded.uid}:${code}`) !== v.codeHash) {
       await ref.update({ attempts: admin.firestore.FieldValue.increment(1) });
       return res.status(400).json({ error: 'Mã xác thực không đúng.' });
     }
-    await db.collection('users').doc(decoded.uid).set({
-      email: em,
-      emailVerified: true,
-      displayName: decoded.name || '',
-      photoURL: decoded.picture || '',
-      notificationEmail: true,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      verifiedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    await db.collection('users').doc(decoded.uid).set({ uid: decoded.uid, email: decoded.email || email, displayName: decoded.name || '', photoURL: decoded.picture || '', emailVerified: true, notificationEmail: true, createdAt: admin.firestore.FieldValue.serverTimestamp(), verifiedAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     await ref.delete();
     res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message || 'Không xác thực được email.' });
-  }
+  } catch (e) { console.error(e); res.status(e.status || 500).json({ error: e.message || 'Không xác thực được email.' }); }
 });
 
-function folderIdFromUrl(url) {
-  const m = String(url || '').match(/\/folders\/([a-zA-Z0-9_-]+)/) || String(url || '').match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  return m ? m[1] : null;
+function folderIdFromUrl(raw) {
+  const text = String(raw || '').trim();
+  const folder = text.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (folder) return folder[1];
+  const id = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return id ? id[1] : null;
 }
-
-async function driveFetch(path, params) {
+async function driveFetch(path, params = {}) {
   const key = process.env.GOOGLE_DRIVE_API_KEY;
-  if (!key) throw Object.assign(new Error('Chưa cấu hình Google Drive API key.'), { status: 500 });
+  if (!key) throw Object.assign(new Error('GOOGLE_DRIVE_API_KEY chưa được cấu hình trong backend.'), { status: 500 });
   const url = new URL(`https://www.googleapis.com/drive/v3/${path}`);
-  Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, v));
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
   url.searchParams.set('key', key);
   const r = await fetch(url);
   const text = await r.text();
   if (!r.ok) {
     let detail = '';
     try { detail = JSON.parse(text)?.error?.message || ''; } catch {}
-    const status = r.status === 403 || r.status === 404 ? 403 : r.status;
-    throw Object.assign(new Error(detail || 'Không thể truy cập Google Drive.'), { status });
+    throw Object.assign(new Error(detail || 'Không thể truy cập Google Drive.'), { status: r.status === 401 || r.status === 403 || r.status === 404 ? 403 : r.status, driveStatus: r.status });
   }
   return JSON.parse(text);
 }
-
 async function listChildren(parentId) {
-  let token = '';
-  const files = [];
+  const files = []; let token = '';
   do {
-    const data = await driveFetch('files', {
-      q: `'${parentId}' in parents and trashed = false`,
-      pageSize: '1000',
-      fields: 'nextPageToken,files(id,name,mimeType,webViewLink,thumbnailLink,size,parents,modifiedTime)',
-      orderBy: 'folder,name',
-      ...(token ? { pageToken: token } : {})
-    });
-    files.push(...(data.files || []));
-    token = data.nextPageToken || '';
+    const d = await driveFetch('files', { q: `'${parentId}' in parents and trashed = false`, pageSize: 1000, fields: 'nextPageToken,files(id,name,mimeType,webViewLink,thumbnailLink,size,modifiedTime)', ...(token ? { pageToken: token } : {}) });
+    files.push(...(d.files || [])); token = d.nextPageToken || '';
   } while (token);
   return files;
 }
@@ -147,57 +122,33 @@ exports.scanDrive = onRequest(async (req, res) => {
   if (req.method === 'OPTIONS') return res.status(204).send('');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
   try {
-    const url = String(body(req).url || '').trim();
-    const rootId = folderIdFromUrl(url);
+    await verifyBearer(req);
+    const rootId = folderIdFromUrl(body(req).url);
     if (!rootId) return res.status(400).json({ error: 'Link Google Drive không hợp lệ. Hãy dán link thư mục.' });
     const root = await driveFetch(`files/${rootId}`, { fields: 'id,name,mimeType,webViewLink' });
     if (root.mimeType !== 'application/vnd.google-apps.folder') return res.status(400).json({ error: 'Link phải trỏ tới một thư mục Google Drive.' });
+
     const queue = [{ id: root.id, path: [root.name], depth: 0 }];
-    const folders = [];
-    const allFiles = [];
-    const seen = new Set([root.id]);
-    while (queue.length) {
-      const current = queue.shift();
+    const rows = []; let visited = 0;
+    while (queue.length && visited < 1000 && rows.length < 1000) {
+      const current = queue.shift(); visited++;
       const children = await listChildren(current.id);
-      folders.push({ ...current, children });
-      for (const f of children) {
-        allFiles.push({ ...f, path: [...current.path, f.name] });
-        if (f.mimeType === 'application/vnd.google-apps.folder' && current.depth < 7 && !seen.has(f.id)) {
-          seen.add(f.id);
-          queue.push({ id: f.id, path: [...current.path, f.name], depth: current.depth + 1 });
-        }
+      const folders = children.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
+      const files = children.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+      if (files.length) {
+        const text = `${current.path.join(' / ')} ${files.map(f => f.name).join(' ')}`;
+        const volume = (text.match(/\b\d+(?:[.,]\d+)?\s*(?:ml|l|kg|g)\b/i) || [])[0] || '';
+        const size = (text.match(/\b\d{2,5}\s*[x×]\s*\d{2,5}(?:\s*[x×]\s*\d{2,5})?\b/i) || [])[0] || '';
+        const quantity = Number((text.match(/(?:qty|quantity|sl)\s*[:_-]?\s*(\d+)/i) || [])[1] || 1);
+        const images = files.filter(f => String(f.mimeType || '').startsWith('image/')).slice(0, 8);
+        rows.push({ id: current.id, name: current.path[current.path.length - 1], productName: current.path[current.path.length - 1], volume, size, quantity, path: current.path.join(' / '), url: `https://drive.google.com/drive/folders/${current.id}`, images: images.map(f => ({ id: f.id, name: f.name, url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w1000`, driveUrl: f.webViewLink || `https://drive.google.com/open?id=${f.id}` })), files: files.slice(0, 30).map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, url: f.webViewLink || `https://drive.google.com/open?id=${f.id}` })) });
       }
-      if (allFiles.length > 5000) break;
+      for (const folder of folders) if (current.depth < 8) queue.push({ id: folder.id, path: [...current.path, folder.name], depth: current.depth + 1 });
     }
-    const candidates = [];
-    for (const folder of folders) {
-      const images = folder.children.filter(f => String(f.mimeType || '').startsWith('image/'));
-      const files = folder.children.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
-      if (!images.length && !files.length) continue;
-      const joined = folder.path.join(' / ');
-      const productName = folder.path[folder.path.length - 1];
-      const text = `${joined} ${files.map(f => f.name).join(' ')}`;
-      const volume = (text.match(/\b(\d+(?:\.\d+)?)\s*(ml|l|lit|litre|kg|g)\b/i) || [])[0] || '';
-      const size = (text.match(/\b(\d{2,5})\s*[x×]\s*(\d{2,5})(?:\s*[x×]\s*(\d{2,5}))?\b/i) || [])[0] || '';
-      const quantity = Number((text.match(/(?:qty|quantity|sl|x)\s*[:_-]?\s*(\d+)/i) || [])[1] || 1);
-      candidates.push({
-        id: folder.id,
-        name: productName,
-        productName,
-        volume,
-        size,
-        quantity,
-        path: joined,
-        url: folder.children.find(Boolean)?.parents ? `https://drive.google.com/drive/folders/${folder.id}` : `https://drive.google.com/drive/folders/${folder.id}`,
-        images: images.slice(0, 8).map(f => ({ id: f.id, name: f.name, url: `https://drive.google.com/thumbnail?id=${f.id}&sz=w800`, driveUrl: f.webViewLink || `https://drive.google.com/open?id=${f.id}` })),
-        files: files.slice(0, 20).map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, url: f.webViewLink || `https://drive.google.com/open?id=${f.id}` }))
-      });
-    }
-    res.json({ ok: true, root: { id: root.id, name: root.name, url: root.webViewLink || url }, scanned: allFiles.length, items: candidates.slice(0, 1000) });
+    res.json({ ok: true, root: { id: root.id, name: root.name, url: root.webViewLink || `https://drive.google.com/drive/folders/${root.id}` }, scannedFolders: visited, items: rows });
   } catch (e) {
     console.error(e);
-    const status = e.status || 500;
-    if (status === 403) return res.status(403).json({ error: 'Không thể truy cập thư mục Google Drive. Hãy vào Chia sẻ → Quyền truy cập chung → Anyone with the link → Viewer rồi thử lại.' });
-    res.status(status).json({ error: e.message || 'Không thể quét Google Drive.' });
+    if (e.status === 403) return res.status(403).json({ error: 'Không thể truy cập thư mục Google Drive. Hãy vào Chia sẻ → Quyền truy cập chung → Anyone with the link → Viewer rồi thử lại.', code: 'DRIVE_NOT_PUBLIC' });
+    res.status(e.status || 500).json({ error: e.message || 'Không thể quét Google Drive.' });
   }
 });
