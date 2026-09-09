@@ -31,15 +31,18 @@ jobs:
       - name: Write Functions environment
         shell: bash
         env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          GMAIL_SMTP_USER: ${{ secrets.GMAIL_SMTP_USER }}
+          GMAIL_SMTP_APP_PASSWORD: ${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
+          GMAIL_SMTP_FROM: ${{ secrets.GMAIL_SMTP_FROM }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
         run: |
-          test -n "$RESEND_API_KEY"
+          test -n "$GMAIL_SMTP_USER"
+          test -n "$GMAIL_SMTP_APP_PASSWORD"
           test -n "$GOOGLE_DRIVE_API_KEY"
           {
-            printf 'RESEND_API_KEY=%s\n' "$RESEND_API_KEY"
-            printf 'RESEND_FROM_EMAIL=%s\n' "${RESEND_FROM_EMAIL:-onboarding@resend.dev}"
+            printf 'GMAIL_SMTP_USER=%s\n' "$GMAIL_SMTP_USER"
+            printf 'GMAIL_SMTP_APP_PASSWORD=%s\n' "$GMAIL_SMTP_APP_PASSWORD"
+            printf 'GMAIL_SMTP_FROM=%s\n' "${GMAIL_SMTP_FROM:-$GMAIL_SMTP_USER}"
             printf 'GOOGLE_DRIVE_API_KEY=%s\n' "$GOOGLE_DRIVE_API_KEY"
           } > functions/.env
       - name: Deploy functions and rules
