@@ -46,6 +46,8 @@ jobs:
             printf 'GOOGLE_DRIVE_API_KEY=%s\n' "$GOOGLE_DRIVE_API_KEY"
           } > functions/.env
       - name: Deploy functions and rules
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
         run: firebase deploy --project gp-statistical-public --only functions,firestore:rules --non-interactive
       - name: Remove temporary secrets
         if: always()
