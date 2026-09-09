@@ -14,22 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
-      - name: Prepare Firebase credentials
-        shell: bash
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GP_STATISTICAL_PUBLIC }}
-        run: |
-          test -n "$FIREBASE_SERVICE_ACCOUNT"
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
-          chmod 600 "$RUNNER_TEMP/firebase-service-account.json"
-          node -e "const x=require(process.env.RUNNER_TEMP+'/firebase-service-account.json'); console.log('Service account:',x.client_email); console.log('Project ID:',x.project_id); if(x.client_email!=='firebase-adminsdk-fbsvc@gp-statistical-public.iam.gserviceaccount.com'||x.project_id!=='gp-statistical-public') process.exit(2)"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
-      - name: Write Functions environment
+
+      - name: Prepare Functions environment
         shell: bash
         env:
           GMAIL_SMTP_USER: ${{ secrets.GMAIL_SMTP_USER }}
@@ -46,11 +39,24 @@ jobs:
             printf 'GMAIL_SMTP_FROM=%s\n' "${GMAIL_SMTP_FROM:-$GMAIL_SMTP_USER}"
             printf 'GOOGLE_DRIVE_API_KEY=%s\n' "$GOOGLE_DRIVE_API_KEY"
           } > functions/.env
+
       - name: Install Functions dependencies
         working-directory: functions
         run: npm install --omit=dev
-      - name: Deploy Firebase Functions only
-        run: firebase deploy --project gp-statistical-public --only functions --non-interactive
+
+      - name: Verify Firebase CLI authentication
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          test -n "$FIREBASE_TOKEN"
+          firebase projects:list --token "$FIREBASE_TOKEN" --json > /tmp/firebase-projects.json
+          node -e "const fs=require('fs'); const x=JSON.parse(fs.readFileSync('/tmp/firebase-projects.json','utf8')); const ok=(x.result||[]).some(p=>p.projectId==='gp-statistical-public'); if(!ok){console.error('Firebase token cannot access gp-statistical-public'); process.exit(2)} console.log('Firebase CLI authentication OK for gp-statistical-public')"
+
+      - name: Deploy Firebase Functions
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: firebase deploy --project gp-statistical-public --only functions --non-interactive --token "$FIREBASE_TOKEN"
+
       - name: Remove temporary secrets
         if: always()
-        run: rm -f functions/.env "$RUNNER_TEMP/firebase-service-account.json"
+        run: rm -f functions/.env /tmp/firebase-projects.json
