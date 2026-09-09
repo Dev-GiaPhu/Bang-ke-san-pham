@@ -25,9 +25,32 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GP_STATISTICAL_PUBLIC }}
         run: |
+          set -euo pipefail
           test -n "$FIREBASE_SERVICE_ACCOUNT"
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
+          chmod 600 "$RUNNER_TEMP/firebase-service-account.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
+      - name: Verify service account identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = process.env.RUNNER_TEMP + '/firebase-service-account.json';
+          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const expectedEmail = 'firebase-adminsdk-fbsvc@gp-statistical-public.iam.gserviceaccount.com';
+          const expectedProject = 'gp-statistical-public';
+          if (j.client_email !== expectedEmail) {
+            console.error(`Service account mismatch. Expected ${expectedEmail}, got ${j.client_email || '(missing)'}`);
+            process.exit(1);
+          }
+          if (j.project_id !== expectedProject) {
+            console.error(`Project mismatch. Expected ${expectedProject}, got ${j.project_id || '(missing)'}`);
+            process.exit(1);
+          }
+          console.log(`Using service account: ${j.client_email}`);
+          console.log(`Project: ${j.project_id}`);
+          NODE
       - name: Write Functions environment
         shell: bash
         env:
@@ -36,6 +59,7 @@ jobs:
           GMAIL_SMTP_FROM: ${{ secrets.GMAIL_SMTP_FROM }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
         run: |
+          set -euo pipefail
           test -n "$GMAIL_SMTP_USER"
           test -n "$GMAIL_SMTP_APP_PASSWORD"
           test -n "$GOOGLE_DRIVE_API_KEY"
@@ -46,8 +70,6 @@ jobs:
             printf 'GOOGLE_DRIVE_API_KEY=%s\n' "$GOOGLE_DRIVE_API_KEY"
           } > functions/.env
       - name: Deploy functions and rules
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
         run: firebase deploy --project gp-statistical-public --only functions,firestore:rules --non-interactive
       - name: Remove temporary secrets
         if: always()
