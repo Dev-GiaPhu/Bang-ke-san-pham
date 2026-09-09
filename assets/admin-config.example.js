@@ -1,0 +1,1 @@
+window.GP_PUBLIC_CONFIG={donateQr:'',donateText:'Cảm ơn bạn đã ủng hộ dự án!',smtpProvider:'',driveScannerUrl:''};
