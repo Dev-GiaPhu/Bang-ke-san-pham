@@ -36,6 +36,7 @@
       return await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve({base64:String(r.result).split(',')[1],extension:(blob.type.split('/')[1]||'jpeg').replace('svg+xml','png')});r.onerror=reject;r.readAsDataURL(blob)});
     }catch{return null}
   }
+
   function colWidth(values,min,max){const n=Math.max(min,...values.map(v=>String(v??'').length));return Math.min(max,n+2)}
 
   async function exportExcel(button){
@@ -51,42 +52,64 @@
     ws.mergeCells(1,1,1,lastCol);ws.getCell(1,1).value='GP STATISTICAL';
     ws.mergeCells(2,1,2,lastCol);ws.getCell(2,1).value='BẢNG KÊ SẢN PHẨM';
     ws.mergeCells(3,1,3,lastCol);ws.getCell(3,1).value='Ngày xuất: '+new Date().toLocaleDateString('vi-VN');
-    ws.mergeCells(4,1,4,lastCol);ws.getCell(4,1).value='Tổng số sản phẩm: '+rows.length+'    |    Tổng số lượng: '+rows.reduce((s,r)=>s+Number(String(r.qty).replace(/[^0-9.-]/g,''),0),0);
+    const totalQty=rows.reduce((s,r)=>s+(Number(String(r.qty).replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))||0),0);
+    ws.mergeCells(4,1,4,lastCol);ws.getCell(4,1).value='Tổng số sản phẩm: '+rows.length+'    |    Tổng số lượng: '+totalQty;
     ws.addRow([]);
     const header=['STT','Hình ảnh','Khách hàng','Sản phẩm','Kích thước','Thể tích','SL','Người thực hiện','Công việc','Ngày','Liên kết Drive'];
-    const h=ws.addRow(header);
-    h.height=28;
+    const h=ws.addRow(header);h.height=28;
     h.eachCell(c=>{c.font={name:'Arial',size:11,bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF132238'}};c.alignment={horizontal:'center',vertical:'middle',wrapText:true};c.border={top:{style:'thin',color:{argb:'FFD9D4CC'}},bottom:{style:'thin',color:{argb:'FFD9D4CC'}},left:{style:'thin',color:{argb:'FFD9D4CC'}},right:{style:'thin',color:{argb:'FFD9D4CC'}}};});
+
     const imageQueue=[];
     rows.forEach((r,i)=>{
-      const row=ws.addRow([i+1,'',r.customer,r.product,r.size||'—',r.volume||'—',Number(r.qty)||r.qty,r.designer||'—',r.work||'—',r.date||'—',r.drive||'—']);
-      row.height=78;
+      const row=ws.addRow([i+1,'',r.customer||'—',r.product||'—',r.size||'—',r.volume||'—',Number(r.qty)||r.qty||'0',r.designer||'—',r.work||'—',r.date||'—',r.drive||'—']);
+      row.height=82;
       row.eachCell((c,ci)=>{c.font={name:'Arial',size:10,color:{argb:'FF132238'},bold:ci===4};c.alignment={vertical:'middle',horizontal:ci===1||ci===2||ci===7?'center':'left',wrapText:true};c.border={top:{style:'thin',color:{argb:'FFD9D4CC'}},bottom:{style:'thin',color:{argb:'FFD9D4CC'}},left:{style:'thin',color:{argb:'FFD9D4CC'}},right:{style:'thin',color:{argb:'FFD9D4CC'}}};});
       if(i%2===0)row.eachCell(c=>{c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF8F6F2'}}});
       row.getCell(1).alignment={horizontal:'center',vertical:'middle'};row.getCell(7).alignment={horizontal:'center',vertical:'middle'};
       if(r.drive){row.getCell(11).value={text:r.drive,hyperlink:r.drive};row.getCell(11).font={name:'Arial',size:9,color:{argb:'FFD65A32'},underline:'single'};}
       r.images.forEach(im=>imageQueue.push({row:i+7,url:im.src}));
     });
+
     ws.getRow(1).height=24;ws.getCell(1,1).font={name:'Arial',size:12,bold:true,color:{argb:'FFF45F3A'}};ws.getCell(1,1).alignment={horizontal:'left',vertical:'middle'};
     ws.getCell(2,1).font={name:'Arial',size:20,bold:true,color:{argb:'FF132238'}};ws.getCell(2,1).alignment={horizontal:'left',vertical:'middle'};ws.getRow(2).height=34;
     ws.getCell(3,1).font={name:'Arial',size:10,color:{argb:'FF697586'}};ws.getCell(3,1).alignment={horizontal:'left',vertical:'middle'};
     ws.getCell(4,1).font={name:'Arial',size:10,bold:true,color:{argb:'FF132238'}};ws.getCell(4,1).alignment={horizontal:'left',vertical:'middle'};
-    const widths=[7,18,18,34,18,12,8,20,32,14,58];widths.forEach((w,i)=>ws.getColumn(i+1).width=w);
-    ws.pageSetup={orientation:'landscape',paperSize:ws.PaperSize.A4,fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:0.25,right:0.25,top:0.5,bottom:0.5,header:0.2,footer:0.2}};
-    ws.printOptions={horizontalCentered:false,verticalCentered:false};ws.freezePanes={ySplit:6};
+
+    // Fixed minimums plus content-aware width: avoids collapsed columns while staying readable.
+    const valuesByCol=[];for(let c=1;c<=lastCol;c++)valuesByCol.push([]);
+    valuesByCol[0]=['STT',...rows.map((_,i)=>String(i+1))];
+    valuesByCol[1]=['Hình ảnh',...rows.map(()=> '')];
+    valuesByCol[2]=['Khách hàng',...rows.map(r=>r.customer)];
+    valuesByCol[3]=['Sản phẩm',...rows.map(r=>r.product)];
+    valuesByCol[4]=['Kích thước',...rows.map(r=>r.size)];
+    valuesByCol[5]=['Thể tích',...rows.map(r=>r.volume)];
+    valuesByCol[6]=['SL',...rows.map(r=>r.qty)];
+    valuesByCol[7]=['Người thực hiện',...rows.map(r=>r.designer)];
+    valuesByCol[8]=['Công việc',...rows.map(r=>r.work)];
+    valuesByCol[9]=['Ngày',...rows.map(r=>r.date)];
+    valuesByCol[10]=['Liên kết Drive',...rows.map(r=>r.drive)];
+    const mins=[7,18,16,24,16,12,8,18,24,13,42],maxs=[8,20,24,40,24,16,10,24,40,16,70];
+    valuesByCol.forEach((vals,i)=>ws.getColumn(i+1).width=colWidth(vals,mins[i],maxs[i]));
+
+    ws.pageSetup={orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:0.25,right:0.25,top:0.5,bottom:0.5,header:0.2,footer:0.2}};
+    ws.printOptions={horizontalCentered:false,verticalCentered:false};
+    ws.freezePanes={ySplit:6};
     ws.autoFilter={from:{row:6,column:1},to:{row:6+rows.length,column:lastCol}};
+
     for(const q of imageQueue){
       const d=await imageData(q.url);if(!d)continue;
       try{const id=wb.addImage({base64:d.base64,extension:d.extension==='jpg'?'jpeg':d.extension});ws.addImage(id,{tl:{col:1.12,row:q.row-1+0.12},ext:{width:112,height:82},editAs:'oneCell'});}catch{}
     }
+
     const sigRow=7+rows.length+2;
     ws.mergeCells(sigRow,8,sigRow,lastCol);ws.getCell(sigRow,8).value='Ngày '+String(new Date().getDate()).padStart(2,'0')+' tháng '+String(new Date().getMonth()+1).padStart(2,'0')+' năm '+new Date().getFullYear();ws.getCell(sigRow,8).font={name:'Arial',size:10};ws.getCell(sigRow,8).alignment={horizontal:'center'};
     ws.mergeCells(sigRow+1,8,sigRow+1,10);ws.getCell(sigRow+1,8).value='Người lập bảng';ws.getCell(sigRow+1,8).font={name:'Arial',size:11,bold:true};ws.getCell(sigRow+1,8).alignment={horizontal:'center'};
     ws.mergeCells(sigRow+2,8,sigRow+2,10);ws.getCell(sigRow+2,8).value='Ký tên, ghi rõ họ tên';ws.getCell(sigRow+2,8).font={name:'Arial',size:9,color:{argb:'FF697586'}};ws.getCell(sigRow+2,8).alignment={horizontal:'center'};
-    ws.mergeCells(sigRow+3,8,sigRow+6,10);ws.getCell(sigRow+3,8).value='';
-    ws.getRow(sigRow+3).height=20;ws.getRow(sigRow+4).height=20;ws.getRow(sigRow+5).height=20;ws.getRow(sigRow+6).height=20;
+    ws.mergeCells(sigRow+3,8,sigRow+6,10);ws.getCell(sigRow+3,8).value='';ws.getRow(sigRow+3).height=20;ws.getRow(sigRow+4).height=20;ws.getRow(sigRow+5).height=20;ws.getRow(sigRow+6).height=20;
+
     const buf=await wb.xlsx.writeBuffer();
     const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='GP-Statistical-'+new Date().toISOString().slice(0,10)+'.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   }
+
   window.addEventListener('click',e=>{const b=e.target.closest?.('[data-export="xlsx"],[data-public-export="xlsx"]');if(!b)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();exportExcel(b);},true);
 })();
