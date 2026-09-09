@@ -1,22 +1,17 @@
 # GP Statistical
 
-Nền tảng web công khai để tạo, quản lý, thống kê và chia sẻ bảng kê.
+Phiên bản rebuild dành cho người dùng công khai.
 
-## Nguyên tắc kiến trúc
-- Mỗi tab chính là một file HTML riêng.
-- Tài khoản website độc lập với Google Drive.
-- Google Drive chỉ được sử dụng khi người dùng dán link thư mục để import dữ liệu.
-- Bảng kê lưu theo người sở hữu và có thể chia sẻ theo quyền.
-- Import Drive có bước quét → xem trước → chọn mục → import.
-- Export Excel/PDF thực hiện trên các dòng người dùng chọn, hoặc toàn bảng nếu không chọn.
+- Mỗi khu vực chính là một HTML page riêng.
+- Tài khoản website dùng Gmail + mật khẩu; email đăng ký phải xác thực OTP 6 số trước khi tạo tài khoản chính thức.
+- Không có Google Drive connection lưu trong tài khoản.
+- Người dùng dán link Drive khi cần import, có thể import thêm nhiều lần vào cùng một bảng kê.
+- Bảng kê có thể chỉnh sửa, thêm/xóa hàng cột, chọn dòng, sửa hàng loạt và xuất Excel/PDF.
+- Quyền chia sẻ được kiểm soát bằng Firestore Rules/backend; không tin quyền phía client.
 
-## Các trang
-`index.html`, `my-sheets.html`, `shared-sheets.html`, `statistics.html`, `settings.html`, `donate.html`, `login.html`, `register.html`, `verify.html`, `sheet.html`.
+## Bắt buộc cấu hình trước khi public
+`assets/config.js` cần Firebase web config và URL Cloud Functions.
 
-## Cần cấu hình trước khi public production
-1. Firebase web config trong `assets/app.js`.
-2. Backend OTP/email và endpoint quét Google Drive; thay các placeholder `REPLACE_*`.
-3. Firestore Security Rules và backend kiểm tra quyền truy cập tài liệu.
-4. Nội dung QR và lời nhắn Donate.
+Cloud Functions cần SMTP để gửi OTP. `scanDrive` phải được triển khai bằng một cơ chế đọc được folder link mà không yêu cầu user cấp OAuth Drive connection cho website (ví dụ chỉ hỗ trợ các folder/file đã được chia sẻ công khai hoặc cơ chế backend hợp lệ có quyền truy cập).
 
-Đây là bộ mã mới độc lập, không phụ thuộc cấu trúc ứng dụng cũ.
+QR Donate và lời nhắn được cấu hình trong `assets/config.js` hoặc admin system.
