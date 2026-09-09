@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - 'functions/**'
-      - 'firestore.rules'
       - 'firebase.json'
       - '.github/workflows/backend.yml'
 permissions:
@@ -20,37 +19,16 @@ jobs:
           node-version: 20
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
-      - name: Write service account
+      - name: Prepare Firebase credentials
         shell: bash
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GP_STATISTICAL_PUBLIC }}
         run: |
-          set -euo pipefail
           test -n "$FIREBASE_SERVICE_ACCOUNT"
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
           chmod 600 "$RUNNER_TEMP/firebase-service-account.json"
+          node -e "const x=require(process.env.RUNNER_TEMP+'/firebase-service-account.json'); console.log('Service account:',x.client_email); console.log('Project ID:',x.project_id); if(x.client_email!=='firebase-adminsdk-fbsvc@gp-statistical-public.iam.gserviceaccount.com'||x.project_id!=='gp-statistical-public') process.exit(2)"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
-      - name: Verify service account identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = process.env.RUNNER_TEMP + '/firebase-service-account.json';
-          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-          const expectedEmail = 'firebase-adminsdk-fbsvc@gp-statistical-public.iam.gserviceaccount.com';
-          const expectedProject = 'gp-statistical-public';
-          if (j.client_email !== expectedEmail) {
-            console.error(`Service account mismatch. Expected ${expectedEmail}, got ${j.client_email || '(missing)'}`);
-            process.exit(1);
-          }
-          if (j.project_id !== expectedProject) {
-            console.error(`Project mismatch. Expected ${expectedProject}, got ${j.project_id || '(missing)'}`);
-            process.exit(1);
-          }
-          console.log(`Using service account: ${j.client_email}`);
-          console.log(`Project: ${j.project_id}`);
-          NODE
       - name: Write Functions environment
         shell: bash
         env:
@@ -59,7 +37,6 @@ jobs:
           GMAIL_SMTP_FROM: ${{ secrets.GMAIL_SMTP_FROM }}
           GOOGLE_DRIVE_API_KEY: ${{ secrets.GOOGLE_DRIVE_API_KEY }}
         run: |
-          set -euo pipefail
           test -n "$GMAIL_SMTP_USER"
           test -n "$GMAIL_SMTP_APP_PASSWORD"
           test -n "$GOOGLE_DRIVE_API_KEY"
@@ -69,8 +46,11 @@ jobs:
             printf 'GMAIL_SMTP_FROM=%s\n' "${GMAIL_SMTP_FROM:-$GMAIL_SMTP_USER}"
             printf 'GOOGLE_DRIVE_API_KEY=%s\n' "$GOOGLE_DRIVE_API_KEY"
           } > functions/.env
-      - name: Deploy functions and rules
-        run: firebase deploy --project gp-statistical-public --only functions,firestore:rules --non-interactive
+      - name: Install Functions dependencies
+        working-directory: functions
+        run: npm install --omit=dev
+      - name: Deploy Firebase Functions only
+        run: firebase deploy --project gp-statistical-public --only functions --non-interactive
       - name: Remove temporary secrets
         if: always()
         run: rm -f functions/.env "$RUNNER_TEMP/firebase-service-account.json"
