@@ -9,6 +9,11 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
 
+    match /userDirectory/{emailKey} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.resource.data.uid == request.auth.uid;
+    }
+
     match /sheets/{id} {
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
       allow read: if owner(id) || member(id);
