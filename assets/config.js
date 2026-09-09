@@ -1,1 +1,3 @@
-export const FIREBASE={apiKey:'REPLACE_FIREBASE_API_KEY',authDomain:'REPLACE_FIREBASE_AUTH_DOMAIN',projectId:'REPLACE_FIREBASE_PROJECT_ID',appId:'REPLACE_FIREBASE_APP_ID'};export const SERVICES={sendVerification:'REPLACE_SEND_VERIFICATION_URL',register:'REPLACE_REGISTER_URL',scanDrive:'REPLACE_SCAN_DRIVE_URL'};export const DONATE={qr:'',text:'Cảm ơn bạn đã ủng hộ và giúp dự án tiếp tục được duy trì.'};
+export const FIREBASE={apiKey:'AIzaSyB7y9r8iAugTHBUQwGbyiE4XHrQ0lZHyuY',authDomain:'gp-statistical-public.firebaseapp.com',projectId:'gp-statistical-public',storageBucket:'gp-statistical-public.firebasestorage.app',messagingSenderId:'38954339425',appId:'1:38954339425:web:5638ef4f4e0a038b47ee20',measurementId:'G-GZXE826P6X'};
+export const SERVICES={sendVerification:'REPLACE_SEND_VERIFICATION_URL',register:'REPLACE_REGISTER_URL',scanDrive:'REPLACE_SCAN_DRIVE_URL'};
+export const DONATE={qr:'',text:'Cảm ơn bạn đã ủng hộ và giúp dự án tiếp tục được duy trì.'};
