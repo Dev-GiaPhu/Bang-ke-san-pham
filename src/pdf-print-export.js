@@ -1,6 +1,6 @@
 (function(){
-  if(window.__GP_PDF_PRINT_EXPORT_V5__) return;
-  window.__GP_PDF_PRINT_EXPORT_V5__=true;
+  if(window.__GP_PDF_PRINT_EXPORT_V6__) return;
+  window.__GP_PDF_PRINT_EXPORT_V6__=true;
 
   const clean=s=>String(s??'').replace(/\s+/g,' ').trim();
   const esc=v=>String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[c]));
@@ -8,6 +8,32 @@
 
   function getTable(){
     return [...document.querySelectorAll('.table-card .table')].find(t=>!t.closest('#__gp_print_host') && t.tHead && t.tBodies[0]);
+  }
+
+  function checkedRowIds(){
+    const table=getTable();
+    if(!table) return [];
+    return [...table.tBodies[0].rows]
+      .filter(tr=>!tr.classList.contains('empty'))
+      .filter(tr=>[...tr.querySelectorAll('input[type="checkbox"]')].some(c=>c.checked))
+      .map(tr=>{
+        const el=tr.querySelector('[data-id],[data-product-id],[data-select-id],[data-row-id]');
+        return el?.dataset?.id || el?.dataset?.productId || el?.dataset?.selectId || el?.dataset?.rowId || '';
+      }).filter(Boolean);
+  }
+
+  function hasSelectionCheckboxes(table){
+    return !!table?.querySelector('tbody input[type="checkbox"]');
+  }
+
+  function selectedRowsOnly(rows){
+    const table=getTable();
+    if(!hasSelectionCheckboxes(table)) return rows;
+    const trs=[...table.tBodies[0].rows].filter(tr=>!tr.classList.contains('empty'));
+    const checked=trs.filter(tr=>tr.querySelector('input[type="checkbox"]:checked'));
+    if(!checked.length) return [];
+    const indexes=new Set(checked.map(tr=>trs.indexOf(tr)));
+    return rows.filter((_,i)=>indexes.has(i));
   }
 
   function getRows(){
@@ -22,7 +48,7 @@
     const idx={};
     for(const [key,names] of Object.entries(aliases)) idx[key]=headers.findIndex(h=>names.includes(h));
 
-    return [...table.tBodies[0].rows].filter(tr=>!tr.classList.contains('empty')&&!tr.querySelector('.empty')).map(tr=>{
+    const rows=[...table.tBodies[0].rows].filter(tr=>!tr.classList.contains('empty')&&!tr.querySelector('.empty')).map(tr=>{
       const cells=[...tr.cells], cell=k=>idx[k]>=0?cells[idx[k]]:null, text=k=>clean(cell(k)?.innerText||'');
       const imageCell=cell('image');
       const images=[...imageCell?.querySelectorAll('img')||[]].map(img=>({src:img.currentSrc||img.src||'',alt:img.alt||''})).filter(x=>x.src).slice(0,2);
@@ -31,8 +57,11 @@
       const drive=anchor?.href||clean(driveCell?.innerText||'').match(/https?:\/\/\S+/)?.[0]||'';
       const qtyRaw=text('qty');
       const qtyNumber=Number(qtyRaw.replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))||0;
-      return {images,customer:text('customer'),product:text('product'),size:text('size'),volume:text('volume'),qtyRaw:qtyRaw||'0',qtyNumber,designer:text('designer'),work:text('work'),date:text('date'),drive};
+      const productStrong=cell('product')?.querySelector('strong');
+      const product=clean(productStrong?.textContent||text('product'));
+      return {images,customer:text('customer'),product,size:text('size'),volume:text('volume'),qtyRaw:qtyRaw||'0',qtyNumber,designer:text('designer'),work:text('work'),date:text('date'),drive};
     });
+    return selectedRowsOnly(rows);
   }
 
   function workHtml(value){
@@ -48,7 +77,7 @@
       <td><strong>${esc(r.product||'—')}</strong></td>
       <td>${esc(r.size||'—')}</td>
       <td>${esc(r.volume||'—')}</td>
-      <td class="qty">${esc(r.qtyRaw)}</td>
+      <td class="qty">${esc(r.qtyRaw||'0')}</td>
       <td>${esc(r.designer||'—')}</td>
       <td class="work">${workHtml(r.work)}</td>
       <td>${esc(r.date||'—')}</td>
@@ -58,7 +87,6 @@
       <header class="print-head"><div><div class="brand">GP STATISTICAL</div><div class="title">Bảng kê sản phẩm</div></div><div class="meta">Ngày xuất: ${esc(issued)}<br>Tổng sản phẩm: ${rows.length}<br>Tổng số lượng: ${totalQty}</div></header>
       <table class="print-table"><thead><tr><th>STT</th><th>Hình ảnh</th><th>Khách hàng</th><th>Sản phẩm</th><th>Kích thước</th><th>Thể tích</th><th>SL</th><th>Người thực hiện</th><th>Công việc</th><th>Ngày</th><th>Liên kết Drive</th></tr></thead><tbody>${body}</tbody></table>
       <section class="signature"><div class="signature-date">Ngày ${String(now.getDate()).padStart(2,'0')} tháng ${String(now.getMonth()+1).padStart(2,'0')} năm ${now.getFullYear()}</div><div class="signature-line">Người lập bảng</div><div class="signature-note">Ký và ghi rõ họ tên</div></section>
-      <footer class="print-foot"><span>GP Statistical — Design &amp; Product Tracker</span><span>Tài liệu A4</span></footer>
     </div>`;
   }
 
@@ -70,7 +98,7 @@
 
   async function printA4(){
     const rows=getRows();
-    if(!rows.length){window.alert('Không có dữ liệu để in A4.');return;}
+    if(!rows.length){window.alert(hasSelectionCheckboxes(getTable())?'Hãy chọn ít nhất một sản phẩm để xuất PDF / A4.':'Không có dữ liệu để in A4.');return;}
     document.getElementById('__gp_print_host')?.remove();
     document.getElementById('__gp_print_style')?.remove();
     const host=document.createElement('div');host.id='__gp_print_host';host.innerHTML=buildSheet(rows);document.body.appendChild(host);
@@ -89,17 +117,43 @@
         .images{display:flex;justify-content:center;align-items:center;gap:3px;min-height:26mm}.images img{width:26mm;height:26mm;object-fit:contain;display:block}
         .work .job{display:inline}.work .sep{white-space:pre;color:#555}.drive{overflow-wrap:anywhere;word-break:break-all}
         .signature{margin:12mm 0 0 auto;width:250px;text-align:center;break-inside:avoid;page-break-inside:avoid}.signature-date{margin-bottom:25mm}.signature-line{border-top:1px solid #111;padding-top:4px;font-weight:700}.signature-note{font-size:7.5pt;color:#555;margin-top:2px}
-        .print-foot{display:flex;justify-content:space-between;margin-top:6mm;font-size:7.5pt;color:#555}
       }
     `;document.head.appendChild(style);
     await waitImages(host);
     const cleanup=()=>{host.remove();style.remove()};
     window.addEventListener('afterprint',cleanup,{once:true});
+    window.focus();
     window.print();
   }
 
+  function selectedDomRows(){
+    const table=getTable();
+    if(!table)return[];
+    const rows=[...table.tBodies[0].rows].filter(tr=>!tr.classList.contains('empty')&&!tr.querySelector('.empty'));
+    if(!hasSelectionCheckboxes(table))return rows;
+    return rows.filter(tr=>tr.querySelector('input[type="checkbox"]:checked'));
+  }
+
+  function exportSelectedXlsx(){
+    if(!window.XLSX){window.alert('Chức năng xuất Excel chưa sẵn sàng.');return;}
+    const trs=selectedDomRows();
+    if(!trs.length){window.alert(hasSelectionCheckboxes(getTable())?'Hãy chọn ít nhất một sản phẩm để xuất Excel.':'Không có dữ liệu để xuất Excel.');return;}
+    const rows=trs.map(tr=>{
+      const cells=[...tr.cells];
+      const product=cells.find(c=>c.querySelector?.('strong'))?.querySelector('strong')?.textContent?.trim()||'';
+      const text=i=>clean(cells[i]?.innerText||'');
+      return [text(1),product,text(3),text(4),text(5),text(6),[...cells[7]?.querySelectorAll('.pill')||[]].map(x=>x.innerText.trim()).filter(Boolean).join(', '),text(8),cells[9]?.querySelector('a')?.href||''];
+    });
+    const ws=XLSX.utils.aoa_to_sheet([['GP Statistical — Bảng kê sản phẩm'],['Ngày xuất',new Date().toLocaleDateString('vi-VN')],[],['Khách hàng','Sản phẩm','Kích thước','Thể tích','Số lượng','Người thực hiện','Loại công việc','Ngày','Drive'],...rows]);
+    ws['!cols']=[{wch:18},{wch:34},{wch:16},{wch:12},{wch:10},{wch:18},{wch:30},{wch:14},{wch:60}];
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Bảng kê');
+    XLSX.writeFile(wb,`GP-Statistical-${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
   window.addEventListener('click',e=>{
-    const b=e.target.closest?.('[data-export="pdf"],[data-public-export="pdf"]');if(!b)return;
-    e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();printA4();
+    const b=e.target.closest?.('[data-export="pdf"],[data-public-export="pdf"]');
+    if(b){e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();printA4();return;}
+    const x=e.target.closest?.('[data-export="xlsx"],[data-public-export="xlsx"]');
+    if(x){e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();exportSelectedXlsx();}
   },true);
 })();
