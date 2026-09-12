@@ -1,1 +1,11 @@
-<!doctype html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Được chia sẻ — GP Statistical</title><link rel="stylesheet" href="assets/app.css"></head><body data-page="shared"><div id="app"></div><script type="module" src="assets/app.js"></script></body></html>
+<!doctype html><html lang="vi"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Được chia sẻ — GP Statistical</title><link rel="stylesheet" href="assets/app.css"></head><body data-page="shared"><div id="app"></div><script type="module" src="assets/app.js"></script><script>
+document.addEventListener('click',function(e){
+  const a=e.target.closest('a[href]');
+  if(!a)return;
+  const url=a.getAttribute('href');
+  if(url && url.startsWith('sheet.html?id=')){
+    e.preventDefault();
+    location.href='shared-sheet.html'+url.slice('sheet.html'.length);
+  }
+},true);
+</script></body></html>
