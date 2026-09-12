@@ -1,0 +1,8 @@
+import{FIREBASE}from'./config.js';import{initializeApp,getApps,getApp}from'https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js';import{getAuth,onAuthStateChanged}from'https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js';import{getFirestore,collection,query,where,getDocs}from'https://www.gstatic.com/firebasejs/12.8.0/firebase-firestore.js';
+const app=getApps().length?getApp():initializeApp(FIREBASE),auth=getAuth(app),db=getFirestore(app);
+const $=s=>document.querySelector(s);
+async function countShared(uid){try{return(await getDocs(query(collection(db,'sheetPermissions'),where('userId','==',uid)))).size}catch{return 0}}
+async function countNotifications(u){let total=0;try{total+=(await getDocs(query(collection(db,'shareInvitations'),where('email','==',String(u.email||'').toLowerCase()),where('status','==','pending')))).size}catch{}try{total+=(await getDocs(query(collection(db,'notifications'),where('userId','==',u.uid)))).docs.filter(d=>d.data()?.read!==true).length}catch{}return total}
+async function patch(){const u=auth.currentUser;if(!u)return;const shared=await countShared(u.uid),notifications=await countNotifications(u);const cards=document.querySelectorAll('#content .grid4 .metric');if(cards[2])cards[2].querySelector('b').textContent=shared; if(cards[3])cards[3].querySelector('b').textContent=notifications}
+let observer;function start(){observer?.disconnect();observer=new MutationObserver(()=>{if(document.querySelector('#content .grid4 .metric')){patch();observer.disconnect()}});observer.observe(document.body,{childList:true,subtree:true});patch()}
+onAuthStateChanged(auth,u=>{if(u)start()});
